@@ -1,14 +1,15 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.config import settings
-from app.api.routes import health, hotpoints, markets, news, monitor_markets, stock_market, others, hot_data
+from app.api.routes import health, hotpoints, markets, news, monitor_markets, stock_market, others, hot_data, rag
 from app.services.hotpoints_engine import recompute_hotpoints
 from app.services.polymarket.client import fetch_polymarket_markets
 from app.services.polymarket.client import schedule_polymarket_monitor_markets_refresh
-from app.services.news.client import fetch_news_articles
+from app.services.news.client import fetch_news_articles, refresh_breaking_news, refresh_general_news
 from app.websockets.manager import ws_manager
 
 scheduler = AsyncIOScheduler()
@@ -16,7 +17,6 @@ scheduler = AsyncIOScheduler()
 
 async def scheduled_refresh():
     await fetch_polymarket_markets()
-    await fetch_news_articles()
     schedule_polymarket_monitor_markets_refresh()
     result = await recompute_hotpoints()
     await ws_manager.broadcast({
@@ -30,16 +30,31 @@ async def scheduled_refresh():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await fetch_polymarket_markets()
-    await fetch_news_articles()
-    schedule_polymarket_monitor_markets_refresh()
-    await recompute_hotpoints()
+    async def initial_refresh():
+        await fetch_polymarket_markets()
+        await refresh_general_news()
+        schedule_polymarket_monitor_markets_refresh()
+        await recompute_hotpoints()
+
+    asyncio.create_task(initial_refresh())
 
     scheduler.add_job(
         scheduled_refresh,
         "interval",
         seconds=settings.polymarket_refresh_seconds,
         id="hotpoints_refresh",
+    )
+    scheduler.add_job(
+        refresh_breaking_news,
+        "interval",
+        seconds=settings.breaking_refresh_seconds,
+        id="breaking_news_refresh",
+    )
+    scheduler.add_job(
+        refresh_general_news,
+        "interval",
+        seconds=settings.general_news_refresh_seconds,
+        id="general_news_refresh",
     )
     scheduler.start()
     yield
@@ -64,6 +79,7 @@ app.include_router(monitor_markets.router, prefix="/api")
 app.include_router(stock_market.router, prefix="/api")
 app.include_router(others.router, prefix="/api")
 app.include_router(hot_data.router, prefix="/api")
+app.include_router(rag.router, prefix="/api")
 
 
 @app.websocket("/ws/hotpoints")

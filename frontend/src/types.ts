@@ -34,10 +34,21 @@ export interface NewsArticle {
   source: string
   keywords: string[]
   published_at: string
+  description?: string
+  url?: string | null
+  image_url?: string | null
+  sentiment?: 'positive' | 'negative' | 'neutral'
+  breaking?: boolean
+  regions?: string[]
+  provider?: string
 }
 
-export interface NewsResponse {
+export interface NewsFeedResponse {
+  generated_at: string
+  breaking: NewsArticle[]
   articles: NewsArticle[]
+  total: number
+  has_more: boolean
 }
 
 export interface StockTicker {

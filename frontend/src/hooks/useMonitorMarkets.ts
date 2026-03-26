@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { HotPointsData } from '../types'
 import { fetchMonitorMarkets } from '../api/client'
 
-export function useMonitorMarkets(intervalMs = 300_000) {
+export function useMonitorMarkets(intervalMs = 30_000) {
   const [data, setData] = useState<HotPointsData | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -12,7 +12,10 @@ export function useMonitorMarkets(intervalMs = 300_000) {
     async function load() {
       try {
         const r = await fetchMonitorMarkets()
-        if (!cancelled) setData(r)
+        if (!cancelled) {
+          setData(r)
+          setError(null)
+        }
       } catch (e) {
         if (!cancelled) setError((e as Error).message)
       }
@@ -28,4 +31,3 @@ export function useMonitorMarkets(intervalMs = 300_000) {
 
   return { data, error }
 }
-

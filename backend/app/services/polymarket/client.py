@@ -32,6 +32,14 @@ if _location_map_path.exists():
 
 _monitor_db_path = Path(settings.data_dir) / "monitor_markets.sqlite"
 
+def _json_default(o: object) -> str:
+    if isinstance(o, datetime):
+        try:
+            return o.isoformat()
+        except Exception:
+            return str(o)
+    return str(o)
+
 
 def _init_monitor_db() -> None:
     conn = sqlite3.connect(_monitor_db_path)
@@ -64,7 +72,7 @@ def _persist_monitor_markets_to_db(markets: list[dict]) -> None:
             if not market_id:
                 continue
             updated_at = str(m.get("updated_at") or "")
-            data_json = json.dumps(m, ensure_ascii=False)
+            data_json = json.dumps(m, ensure_ascii=False, default=_json_default)
             conn.execute(
                 """
                 INSERT INTO monitor_markets (market_id, data_json, updated_at)
