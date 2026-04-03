@@ -40,7 +40,7 @@ export default function SettingsModal({ open, onClose }: Props) {
           <div>
             <div className="text-[12px] font-semibold text-text-secondary mb-1">Platform</div>
             <p className="text-[13px] text-text-muted leading-relaxed">
-              PolyMonitor aggregates Polymarket, news, and market data. Chat uses your Supabase-backed history and Gemini.
+              PolyMonitor aggregates Polymarket and market data. Chat uses your Supabase-backed history and Gemini.
             </p>
           </div>
           <div>

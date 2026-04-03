@@ -8,5 +8,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
+  },
+  "dependencies": {
+    "@vnedyalk0v/react19-simple-maps": "^2.0.3"
   }
 }
