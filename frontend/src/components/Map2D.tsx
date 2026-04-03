@@ -1,6 +1,7 @@
 import { memo, useCallback, useMemo, useState } from 'react'
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from 'react-simple-maps'
 import type { MapCluster } from './FlatMap'
+import { categoryColor } from '../constants/polymarketCategoryColors'
 
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'
 
@@ -16,20 +17,8 @@ interface Props {
   onClusterClick?: (key: string) => void
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  politics: '#f43f5e',
-  geopolitics: '#ef4444',
-  economics: '#f59e0b',
-  crypto: '#a855f7',
-  tech: '#00d4ff',
-  stocks: '#22c55e',
-  health: '#10b981',
-  climate: '#06b6d4',
-  sports: '#ec4899',
-}
-
 function getColor(category: string): string {
-  return CATEGORY_COLORS[category] || '#00d4ff'
+  return categoryColor(category, '#0284c7')
 }
 
 function scoreToR(score: number, maxScore: number): number {
@@ -117,8 +106,8 @@ function Map2D({ clusters, selectedKey, onClusterClick }: Props) {
                     <Geography
                       key={geo.rsmKey}
                       geography={geo as object}
-                      fill="#1a1a1a"
-                      stroke="#444"
+                      fill="#e2e8f0"
+                      stroke="#94a3b8"
                       strokeWidth={0.35}
                       onMouseEnter={() => {
                         if (name) setHover({ name, lng, lat })
@@ -126,7 +115,7 @@ function Map2D({ clusters, selectedKey, onClusterClick }: Props) {
                       onMouseLeave={() => setHover(null)}
                       style={{
                         default: { outline: 'none' },
-                        hover: { fill: '#242424', outline: 'none' },
+                        hover: { fill: '#cbd5e1', outline: 'none' },
                         pressed: { outline: 'none' },
                       }}
                     />
@@ -136,7 +125,7 @@ function Map2D({ clusters, selectedKey, onClusterClick }: Props) {
                   <Marker coordinates={[hover.lng, hover.lat]}>
                     <text
                       textAnchor="middle"
-                      fill="rgba(255,255,255,0.85)"
+                      fill="rgba(15,23,42,0.85)"
                       fontSize={5}
                       style={{ pointerEvents: 'none', userSelect: 'none' }}
                     >

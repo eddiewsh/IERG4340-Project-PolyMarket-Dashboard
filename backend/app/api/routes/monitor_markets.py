@@ -14,9 +14,9 @@ router = APIRouter()
 @router.get("/monitor/markets", response_model=HotPointsResponse)
 async def get_monitor_markets():
     nodes = get_cached_monitor_markets()
-    if not nodes:
-        # 不要在 request 內同步拉 Gamma API，避免前端一直 loading
-        schedule_polymarket_monitor_markets_refresh()
+    # 不在 request 內同步拉 Gamma API；改為每次 request 觸發背景 refresh。
+    # 服務內部已有防重入，不會重複建立 refresh task。
+    schedule_polymarket_monitor_markets_refresh()
 
     now = datetime.now(timezone.utc)
     return HotPointsResponse(

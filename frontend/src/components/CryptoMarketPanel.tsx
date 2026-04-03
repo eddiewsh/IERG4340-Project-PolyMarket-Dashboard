@@ -1,4 +1,4 @@
-import { useCryptoMarketStream } from '../hooks/useCryptoMarketStream'
+import { useCryptoMarketStream, type CryptoMarketTicker } from '../hooks/useCryptoMarketStream'
 
 function formatNumber(n: number): string {
   if (!Number.isFinite(n)) return '0'
@@ -13,7 +13,12 @@ function pctClass(pct: number): string {
   return 'text-slate-400'
 }
 
-export default function CryptoMarketPanel() {
+type Props = {
+  selectedPair?: string | null
+  onSelect?: (t: CryptoMarketTicker) => void
+}
+
+export default function CryptoMarketPanel({ selectedPair = null, onSelect }: Props) {
   const { tickers, error, initialLoaded } = useCryptoMarketStream()
 
   return (
@@ -22,7 +27,7 @@ export default function CryptoMarketPanel() {
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-[15px] font-bold tracking-wider text-accent-cyan uppercase">CryptoMarket</h2>
           <div className="flex items-center gap-2">
-            <span className="text-[13px] px-3 py-1 rounded-full bg-white/[0.08] border border-accent-cyan/40 text-text-primary">
+            <span className="text-[13px] px-3 py-1 rounded-full bg-slate-100 border border-accent-cyan/40 text-text-primary">
               24h
             </span>
           </div>
@@ -49,13 +54,18 @@ export default function CryptoMarketPanel() {
             <div className="space-y-0.5">
               {tickers.map((t) => {
                 const volBase = t.baseVolume ? parseFloat(t.baseVolume) : NaN
+                const sel = selectedPair === t.pair
                 return (
-                  <div
+                  <button
                     key={t.pair}
-                    className="grid grid-cols-[160px_1fr_110px_110px] items-center py-2 border-t border-white/[0.06]"
+                    type="button"
+                    onClick={() => onSelect?.(t)}
+                    className={`w-full text-left grid grid-cols-[160px_1fr_110px_110px] items-center py-2 border-t border-slate-200 rounded-md transition-colors hover:bg-slate-100 ${
+                      sel ? 'bg-accent-cyan/10 ring-1 ring-accent-cyan/35' : ''
+                    }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-7 h-7 rounded-full bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-[13px] font-bold text-text-primary shrink-0">
+                      <div className="w-7 h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center text-[13px] font-bold text-text-primary shrink-0">
                         {t.base}
                       </div>
                       <div className="min-w-0">
@@ -79,7 +89,7 @@ export default function CryptoMarketPanel() {
                     <div className="text-right text-[14px] text-text-secondary">
                       {Number.isFinite(volBase) ? formatNumber(volBase) : '--'}
                     </div>
-                  </div>
+                  </button>
                 )
               })}
             </div>

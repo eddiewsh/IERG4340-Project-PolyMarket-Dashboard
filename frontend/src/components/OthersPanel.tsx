@@ -2,9 +2,13 @@ import { useEffect, useState } from 'react'
 import { fetchHotGoods, fetchOthers } from '../api/client'
 import type { HotGoodsResponse, OthersResponse, SimpleQuote } from '../types'
 
-function QuoteRow({ q }: { q: SimpleQuote }) {
+function QuoteRow({ q, onSelect, category }: { q: SimpleQuote; onSelect?: (symbol: string, name: string, category: string) => void; category: string }) {
   return (
-    <div className="flex items-center justify-between py-2 border-t border-white/[0.06]">
+    <button
+      type="button"
+      onClick={() => onSelect?.(q.symbol, q.name, category)}
+      className="w-full text-left flex items-center justify-between py-2 border-t border-slate-200 hover:bg-slate-100 rounded-md px-1"
+    >
       <div className="min-w-0">
         <div className="text-[14px] font-semibold text-text-primary truncate">{q.symbol}</div>
         <div className="text-[12px] text-text-muted truncate">{q.name}</div>
@@ -17,24 +21,24 @@ function QuoteRow({ q }: { q: SimpleQuote }) {
           {q.change_percentage == null ? '' : `${q.change_percentage.toFixed(4)}%`}
         </div>
       </div>
-    </div>
+    </button>
   )
 }
 
-function Section({ title, items }: { title: string; items: SimpleQuote[] }) {
+function Section({ title, items, onSelect }: { title: string; items: SimpleQuote[]; onSelect?: (symbol: string, name: string, category: string) => void }) {
   return (
-    <div className="rounded-xl p-3 bg-white/[0.03] border border-white/[0.04]">
+    <div className="rounded-xl p-3 bg-slate-50 border border-slate-200">
       <div className="text-[14px] font-bold tracking-wider text-accent-cyan uppercase mb-2">{title}</div>
       <div>
         {items.map((q) => (
-          <QuoteRow key={q.symbol} q={q} />
+          <QuoteRow key={q.symbol} q={q} onSelect={onSelect} category={title.toLowerCase()} />
         ))}
       </div>
     </div>
   )
 }
 
-export default function OthersPanel() {
+export default function OthersPanel({ onSelect }: { onSelect?: (symbol: string, name: string, category: string) => void }) {
   const [data, setData] = useState<OthersResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hot, setHot] = useState<HotGoodsResponse | null>(null)
@@ -57,7 +61,7 @@ export default function OthersPanel() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-3">
-        <div className="rounded-xl p-3 bg-white/[0.03] border border-white/[0.04]">
+        <div className="rounded-xl p-3 bg-slate-50 border border-slate-200">
           <div className="text-[14px] font-bold tracking-wider text-accent-cyan uppercase mb-2">Hot Goods</div>
           {hotError && <div className="text-[13px] text-rose-400 mb-2">{hotError}</div>}
           {!hot ? (
@@ -67,7 +71,7 @@ export default function OthersPanel() {
           ) : hot.goods.length ? (
             <div>
               {hot.goods.map((q) => (
-                <QuoteRow key={q.symbol} q={q} />
+                <QuoteRow key={q.symbol} q={q} onSelect={onSelect} category="goods" />
               ))}
             </div>
           ) : (
@@ -82,9 +86,9 @@ export default function OthersPanel() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3">
-            <Section title="FX" items={data.fx} />
-            <Section title="Energy" items={data.energy} />
-            <Section title="Metals" items={data.metals} />
+            <Section title="FX" items={data.fx} onSelect={onSelect} />
+            <Section title="Energy" items={data.energy} onSelect={onSelect} />
+            <Section title="Metals" items={data.metals} onSelect={onSelect} />
           </div>
         )}
       </div>

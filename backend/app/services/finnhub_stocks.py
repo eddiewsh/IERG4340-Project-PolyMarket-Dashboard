@@ -47,7 +47,7 @@ async def _get_exchange_sectors_finnhub(
     exchange_label: str,
     exchange_code: str,
     *,
-    max_tickers: int = 80,
+    max_tickers: int = 120,
 ) -> dict[str, Any]:
     async with httpx.AsyncClient() as client:
         symbols_payload = await _fetch_symbols(exchange_code, client=client)

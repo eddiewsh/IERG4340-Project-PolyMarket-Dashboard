@@ -21,8 +21,6 @@ async def get_hot_stocks():
 
 @router.get("/goods/hot", response_model=HotGoodsResponse)
 async def get_hot_goods():
-    if not settings.fmp_api_key:
-        raise HTTPException(500, "Missing fmp_api_key")
     now = datetime.now(timezone.utc)
     goods = await build_hot_goods()
     return HotGoodsResponse(generated_at=now, goods=goods)

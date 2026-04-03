@@ -3,6 +3,7 @@ import Globe, { type GlobeInstance } from 'globe.gl'
 import { feature } from 'topojson-client'
 import * as THREE from 'three'
 import type { HotPointNode } from '../types'
+import { categoryColor } from '../constants/polymarketCategoryColors'
 
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'
 
@@ -19,18 +20,6 @@ interface Props {
   clusters: MapCluster[]
   selectedKey: string | null
   onClusterClick?: (key: string) => void
-}
-
-const CATEGORY_COLORS: Record<string, string> = {
-  politics: '#f43f5e',
-  geopolitics: '#ef4444',
-  economics: '#f59e0b',
-  crypto: '#a855f7',
-  tech: '#00d4ff',
-  stocks: '#22c55e',
-  health: '#10b981',
-  climate: '#06b6d4',
-  sports: '#ec4899',
 }
 
 const COUNTRY_NAMES: Record<string, string> = {
@@ -63,7 +52,7 @@ function countryNameFromFeature(feat: { id?: string | number }): string {
 }
 
 function getColor(category: string): string {
-  return CATEGORY_COLORS[category] || '#00d4ff'
+  return categoryColor(category, '#0284c7')
 }
 
 function scoreToSize(score: number, maxScore: number): number {
@@ -87,7 +76,7 @@ export default function GlobeMap({ clusters, selectedKey, onClusterClick }: Prop
     if (!containerRef.current) return
 
     const globeMat = new THREE.MeshPhongMaterial({
-      color: new THREE.Color('#0d0d0d'),
+      color: new THREE.Color('#f1f5f9'),
       transparent: true,
       opacity: 0.95,
     })
@@ -97,9 +86,9 @@ export default function GlobeMap({ clusters, selectedKey, onClusterClick }: Prop
       .showAtmosphere(false)
       .globeMaterial(globeMat as any)
       .polygonsData([])
-      .polygonCapColor(() => '#1a1a1a')
-      .polygonSideColor(() => '#222222')
-      .polygonStrokeColor(() => '#444444')
+      .polygonCapColor(() => '#e2e8f0')
+      .polygonSideColor(() => '#cbd5e1')
+      .polygonStrokeColor(() => '#94a3b8')
       .polygonAltitude(0.006)
       .pointsData([])
       .pointLat('lat')
@@ -114,7 +103,7 @@ export default function GlobeMap({ clusters, selectedKey, onClusterClick }: Prop
       .polygonLabel((feat: { id?: string | number }) => {
         const name = countryNameFromFeature(feat)
         return name
-          ? `<div style="padding:4px 8px;background:rgba(0,0,0,0.82);color:#e8e8e8;font-size:11px;border-radius:6px;border:1px solid rgba(255,255,255,0.12)">${name}</div>`
+          ? `<div style="padding:4px 8px;background:rgba(255,255,255,0.95);color:#0f172a;font-size:11px;border-radius:6px;border:1px solid rgba(15,23,42,0.12);box-shadow:0 1px 4px rgba(15,23,42,0.08)">${name}</div>`
           : ''
       })
       .ringsData([])

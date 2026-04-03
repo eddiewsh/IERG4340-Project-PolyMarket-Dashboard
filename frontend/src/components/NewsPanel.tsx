@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { fetchNews } from '../api/client'
 import type { NewsArticle, NewsFeedResponse } from '../types'
 
@@ -32,6 +32,7 @@ function writeLsCache(key: string, data: NewsFeedResponse) {
 
 const REGIONS: { id: string; label: string }[] = [
   { id: 'all', label: 'All / Global' },
+  { id: 'finance', label: 'Finance Real Time' },
   { id: 'hong_kong', label: 'Hong Kong' },
   { id: 'china', label: 'China' },
   { id: 'japan', label: 'Japan' },
@@ -50,7 +51,7 @@ const TIME_OPTS: { id: string; label: string }[] = [
   { id: 'all', label: 'All' },
 ]
 
-function relativeTime(iso: string): string {
+export function relativeTime(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   const s = Math.floor((Date.now() - d.getTime()) / 1000)
@@ -76,8 +77,17 @@ function SentimentPill({ s }: { s: NewsArticle['sentiment'] }) {
   )
 }
 
-function BreakingCarousel({ items }: { items: NewsArticle[] }) {
+function BreakingCarousel({
+  items,
+  title,
+  onSelectNews,
+}: {
+  items: NewsArticle[]
+  title?: string
+  onSelectNews?: (a: NewsArticle) => void
+}) {
   if (!items.length) return null
+  const head = title ?? 'Breaking News'
   return (
     <div className="mb-4 animate-breaking-pulse rounded-xl border border-rose-500/35 bg-rose-950/20 p-3">
       <div className="flex items-center gap-2 mb-3">
@@ -88,46 +98,93 @@ function BreakingCarousel({ items }: { items: NewsArticle[] }) {
             clipRule="evenodd"
           />
         </svg>
-        <span className="text-[12px] font-bold uppercase tracking-widest text-rose-400">Breaking News</span>
+        <span className="text-[12px] font-bold uppercase tracking-widest text-rose-400">{head}</span>
       </div>
       <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory">
         {items.map((a, i) => (
-          <a
-            key={`${a.url ?? a.title}-${i}`}
-            href={a.url ?? '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`min-w-[260px] max-w-[300px] snap-start glass rounded-lg p-3 border border-white/[0.08] hover:border-rose-500/40 transition-colors ${a.url ? '' : 'pointer-events-none opacity-80'}`}
-          >
-            <div className="text-[10px] font-bold text-rose-400 uppercase tracking-wider mb-2">Breaking</div>
-            <div className="text-[14px] font-semibold text-text-primary leading-snug line-clamp-3">{a.title}</div>
-            {a.description && (
-              <div className="mt-2 text-[12px] text-text-secondary line-clamp-2">{a.description}</div>
-            )}
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="text-[11px] text-text-muted truncate">{a.source}</span>
-              <span className="text-[11px] text-text-muted shrink-0">{relativeTime(a.published_at)}</span>
-            </div>
-            <div className="mt-2">
-              <SentimentPill s={a.sentiment} />
-            </div>
-          </a>
+          <BreakingSlide key={`${a.url ?? a.title}-${i}`} a={a} onSelectNews={onSelectNews} />
         ))}
       </div>
     </div>
   )
 }
 
-function FeedCard({ a }: { a: NewsArticle }) {
-  const [imgOk, setImgOk] = useState(!!a.image_url)
+function BreakingSlide({ a, onSelectNews }: { a: NewsArticle; onSelectNews?: (a: NewsArticle) => void }) {
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleClick = () => {
+    if (!onSelectNews) {
+      if (a.url) window.open(a.url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null
+      onSelectNews(a)
+    }, 280)
+  }
+  const handleDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current)
+      clickTimerRef.current = null
+    }
+    if (a.url) window.open(a.url, '_blank', 'noopener,noreferrer')
+  }
   return (
-    <a
-      href={a.url ?? '#'}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={`flex gap-3 rounded-xl p-3 glass border border-white/[0.06] hover:border-accent-cyan/25 transition-colors ${a.url ? '' : 'pointer-events-none'}`}
+    <div
+      role={onSelectNews ? 'button' : undefined}
+      tabIndex={onSelectNews ? 0 : undefined}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      className={`min-w-[260px] max-w-[300px] snap-start glass rounded-lg p-3 border border-slate-200 hover:border-rose-500/40 transition-colors select-none ${a.url || onSelectNews ? 'cursor-pointer' : 'pointer-events-none opacity-80'}`}
     >
-      <div className="w-20 h-20 shrink-0 rounded-lg overflow-hidden bg-white/[0.04] border border-white/[0.06]">
+      <div className="text-[10px] font-bold text-rose-400 uppercase tracking-wider mb-2">Breaking</div>
+      <div className="text-[14px] font-semibold text-text-primary leading-snug line-clamp-3">{a.title}</div>
+      {a.description && (
+        <div className="mt-2 text-[12px] text-text-secondary line-clamp-2">{a.description}</div>
+      )}
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-[11px] text-text-muted truncate">{a.source}</span>
+        <span className="text-[11px] text-text-muted shrink-0">{relativeTime(a.published_at)}</span>
+      </div>
+      <div className="mt-2">
+        <SentimentPill s={a.sentiment} />
+      </div>
+    </div>
+  )
+}
+
+function FeedCard({ a, onSelectNews }: { a: NewsArticle; onSelectNews?: (a: NewsArticle) => void }) {
+  const [imgOk, setImgOk] = useState(!!a.image_url)
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleClick = () => {
+    if (!onSelectNews) {
+      if (a.url) window.open(a.url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null
+      onSelectNews(a)
+    }, 280)
+  }
+  const handleDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current)
+      clickTimerRef.current = null
+    }
+    if (a.url) window.open(a.url, '_blank', 'noopener,noreferrer')
+  }
+  return (
+    <div
+      role={onSelectNews ? 'button' : undefined}
+      tabIndex={onSelectNews ? 0 : undefined}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      className={`flex gap-3 rounded-xl p-3 glass border border-slate-200 hover:border-accent-cyan/25 transition-colors select-none ${a.url || onSelectNews ? 'cursor-pointer' : 'cursor-default opacity-90'}`}
+    >
+      <div className="w-20 h-20 shrink-0 rounded-lg overflow-hidden bg-slate-50 border border-slate-200">
         {imgOk && a.image_url ? (
           <img
             src={a.image_url}
@@ -152,11 +209,11 @@ function FeedCard({ a }: { a: NewsArticle }) {
         <span className="text-[11px] text-text-muted">{relativeTime(a.published_at)}</span>
         <SentimentPill s={a.sentiment} />
       </div>
-    </a>
+    </div>
   )
 }
 
-export default function NewsPanel() {
+export default function NewsPanel({ onSelectNews }: { onSelectNews?: (a: NewsArticle) => void }) {
   const [region, setRegion] = useState('all')
   const [timeWindow, setTimeWindow] = useState('24h')
   const [breakingOnly, setBreakingOnly] = useState(false)
@@ -245,7 +302,7 @@ export default function NewsPanel() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="shrink-0 z-10 px-4 pt-3 pb-3 border-b border-white/[0.06] bg-[#0a0a0f]/90 backdrop-blur-md">
+      <div className="shrink-0 z-10 px-4 pt-3 pb-3 border-b border-slate-200 bg-white/90 backdrop-blur-md">
         <div className="flex items-center justify-between gap-2 mb-3">
           <h2 className="text-[15px] font-bold tracking-wider text-accent-cyan uppercase">Live News</h2>
           <button
@@ -254,7 +311,7 @@ export default function NewsPanel() {
             className={`text-[11px] uppercase tracking-wide px-2.5 py-1 rounded-full border transition-colors ${
               breakingOnly
                 ? 'bg-rose-500/25 border-rose-400 text-rose-300'
-                : 'border-white/[0.12] text-text-muted hover:text-text-secondary'
+                : 'border-slate-300 text-text-muted hover:text-text-secondary'
             }`}
           >
             Breaking
@@ -268,8 +325,8 @@ export default function NewsPanel() {
               onClick={() => setRegion(r.id)}
               className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
                 region === r.id
-                  ? 'bg-white/[0.12] border-accent-cyan/40 text-text-primary'
-                  : 'border-transparent text-text-muted hover:text-text-secondary hover:bg-white/[0.05]'
+                  ? 'bg-slate-200 border-accent-cyan/40 text-text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-secondary hover:bg-slate-100'
               }`}
             >
               {r.label}
@@ -285,7 +342,7 @@ export default function NewsPanel() {
               className={`text-[11px] px-2 py-1 rounded-md border ${
                 timeWindow === t.id
                   ? 'border-accent-cyan/50 text-accent-cyan bg-accent-cyan/10'
-                  : 'border-white/[0.08] text-text-muted hover:border-white/[0.15]'
+                  : 'border-slate-200 text-text-muted hover:border-slate-300'
               }`}
             >
               {t.label}
@@ -303,10 +360,16 @@ export default function NewsPanel() {
         )}
         {!loading && (
           <>
-            {!breakingOnly && <BreakingCarousel items={breaking} />}
+            {!breakingOnly && (
+              <BreakingCarousel
+                items={breaking}
+                title={region === 'finance' ? 'Finance live' : undefined}
+                onSelectNews={onSelectNews}
+              />
+            )}
             <div className="space-y-2">
               {feed.map((a, idx) => (
-                <FeedCard key={`${a.title}-${idx}`} a={a} />
+                <FeedCard key={`${a.title}-${idx}`} a={a} onSelectNews={onSelectNews} />
               ))}
             </div>
             {!feed.length && !error && (

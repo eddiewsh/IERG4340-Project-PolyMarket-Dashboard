@@ -4,7 +4,7 @@ import asyncio
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import httpx
 
@@ -133,44 +133,58 @@ def _parse_json_maybe(v: object) -> list[object]:
     return []
 
 
-def _infer_category(text: str) -> str:
-    t = text.lower()
-    if any(x in t for x in ["election", "presidential", "trump", "biden", "congress", "prime minister", "general election"]):
-        return "politics"
-    if any(
-        x in t
-        for x in [
-            "ukraine",
-            "russia",
-            "nato",
-            "china",
-            "taiwan",
-            "israel",
-            "palestine",
-            "gaza",
-            "iran",
-            "north korea",
-            "south china sea",
-            "middle east",
-            "houthi",
-        ]
-    ):
-        return "geopolitics"
-    if any(x in t for x in ["bitcoin", "ethereum", "crypto", "solana", "decentralized", "sec"]):
-        return "crypto"
-    if any(x in t for x in ["fed", "rate cut", "gdp", "recession", "opec", "oil", "economy", "liquidity", "inflation"]):
-        return "economics"
-    if any(x in t for x in ["stock", "tesla", "nvidia", "market cap", "shares", "s&p"]):
-        return "stocks"
-    if any(x in t for x in ["openai", "gpt", "ai", "gemini", "artificial intelligence", "nasa", "spacex", "space", "vision pro"]):
-        return "tech"
-    if any(x in t for x in ["who", "pandemic", "virus", "respiratory"]):
-        return "health"
-    if any(x in t for x in ["climate", "temperature", "1.5c", "1.5c breach"]):
-        return "climate"
-    if any(x in t for x in ["world cup", "fifa", "tournament", "nba", "nfl", "olympics"]):
-        return "sports"
-    return "economics"
+_TAG_SLUG_SKIP = frozenset(
+    {
+        "2024-predictions",
+        "2025-predictions",
+        "2026-predictions",
+        "2027-predictions",
+        "all",
+        "all-events",
+    }
+)
+
+
+def _slug_from_polymarket_tag(tag: dict) -> str:
+    raw = str(tag.get("slug") or "").strip().lower()
+    if raw:
+        return raw
+    label = str(tag.get("label") or "").strip()
+    if not label:
+        return ""
+    s = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    return s or ""
+
+
+def _category_from_event_tags(ev: dict) -> str:
+    tags = ev.get("tags") or []
+    if not isinstance(tags, list):
+        return "uncategorized"
+    for tag in tags:
+        if not isinstance(tag, dict):
+            continue
+        slug = _slug_from_polymarket_tag(tag)
+        if not slug or slug in _TAG_SLUG_SKIP:
+            continue
+        return slug
+    return "uncategorized"
+
+
+def _event_tag_slugs(ev: dict) -> list[str]:
+    tags = ev.get("tags") or []
+    if not isinstance(tags, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if not isinstance(tag, dict):
+            continue
+        slug = _slug_from_polymarket_tag(tag)
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        out.append(slug)
+    return out
 
 
 def _infer_keywords(text: str) -> list[str]:
@@ -182,21 +196,113 @@ def _infer_keywords(text: str) -> list[str]:
     return hits
 
 
+def _outcome_item_to_labels(o: object) -> list[str]:
+    if isinstance(o, dict):
+        for k in ("name", "outcome", "label", "title"):
+            v = o.get(k)
+            if v is not None and str(v).strip():
+                return [str(v).strip()]
+        return []
+    if isinstance(o, str):
+        s = o.strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                inner = json.loads(s)
+                if isinstance(inner, list):
+                    acc: list[str] = []
+                    for x in inner:
+                        acc.extend(_outcome_item_to_labels(x))
+                    return acc if acc else ([s] if s else [])
+            except Exception:
+                pass
+        return [s] if s else []
+    if o is None:
+        return []
+    return [str(o).strip()]
+
+
+def _unwrap_price_list(raw: object) -> list[object]:
+    lst = _parse_json_maybe(raw)
+    if len(lst) == 1 and isinstance(lst[0], str):
+        s0 = lst[0].strip()
+        if s0.startswith("[") and s0.endswith("]"):
+            try:
+                inner = json.loads(s0)
+                if isinstance(inner, list):
+                    return inner
+            except Exception:
+                pass
+    return lst
+
+
 def _parse_market_outcomes(outcomes_raw: object, outcome_prices_raw: object) -> tuple[list[str], list[float]]:
     outcomes_list = _parse_json_maybe(outcomes_raw)
-    outcome_prices_list = _parse_json_maybe(outcome_prices_raw)
+    if not outcomes_list and isinstance(outcomes_raw, str):
+        s = outcomes_raw.strip()
+        if s.startswith("["):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    outcomes_list = parsed
+            except Exception:
+                pass
 
     outcomes: list[str] = []
     for o in outcomes_list:
-        if isinstance(o, str):
-            outcomes.append(o)
-        else:
-            outcomes.append(str(o))
+        outcomes.extend(_outcome_item_to_labels(o))
 
-    prices: list[float] = []
-    for p in outcome_prices_list:
-        prices.append(_safe_float(p, 0.0))
+    outcome_prices_list = _unwrap_price_list(outcome_prices_raw)
+    prices = [_safe_float(p, 0.0) for p in outcome_prices_list]
+
+    if len(outcomes) == 1 and len(prices) > 1:
+        s = outcomes[0].strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                inner = json.loads(s)
+                if isinstance(inner, list) and len(inner) == len(prices):
+                    outcomes = []
+                    for x in inner:
+                        outcomes.extend(_outcome_item_to_labels(x))
+            except Exception:
+                pass
+
     return outcomes, prices
+
+
+def _align_outcomes_and_prices(
+    outcomes: list[str], prices: list[float]
+) -> Optional[Tuple[list[str], list[float]]]:
+    if not outcomes or not prices:
+        return None
+    n = min(len(outcomes), len(prices))
+    if n < 2:
+        return None
+    return outcomes[:n], prices[:n]
+
+
+def _extract_rules(ev: dict, market: dict) -> str:
+    parts: list[str] = []
+    candidates = [
+        market.get("rules"),
+        market.get("resolutionSource"),
+        market.get("resolutionCriteria"),
+        market.get("resolution_criteria"),
+        ev.get("rules"),
+        ev.get("resolutionSource"),
+    ]
+    for c in candidates:
+        s = str(c or "").strip()
+        if not s:
+            continue
+        if s in parts:
+            continue
+        parts.append(s)
+    if not parts:
+        return ""
+    text = "\n\n".join(parts)
+    text = re.sub(r"\s+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text[:3000]
 
 
 async def fetch_polymarket_markets() -> list[dict]:
@@ -211,23 +317,31 @@ async def fetch_polymarket_markets() -> list[dict]:
 
     markets: list[dict] = []
 
-    # 事件是分頁的；先抓一頁足夠提供熱點市場，後續輪詢再更新
-    limit_events = 30
-    params = {
-        "active": "true",
-        "closed": "false",
-        "order": "volume_24hr",
-        "ascending": "false",
-        "limit": str(limit_events),
-        "offset": "0",
-    }
-
-    events = []
+    events: list[dict] = []
     try:
+        offset = 0
+        batch_limit = 100
+        max_events = settings.polymarket_markets_max_events
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(f"{settings.polymarket_base_url}/events", params=params)
-            resp.raise_for_status()
-            events = resp.json()
+            while len(events) < max_events:
+                params = {
+                    "active": "true",
+                    "closed": "false",
+                    "order": "volume24hr",
+                    "ascending": "false",
+                    "limit": str(batch_limit),
+                    "offset": str(offset),
+                }
+                resp = await client.get(f"{settings.polymarket_base_url}/events", params=params)
+                resp.raise_for_status()
+                batch = resp.json() or []
+                if not batch:
+                    break
+                events.extend(batch)
+                if len(batch) < batch_limit:
+                    break
+                offset += len(batch)
+        events = events[:max_events]
     except Exception:
         mock_path = settings.mock_dir / "polymarket_markets.json"
         if mock_path.exists():
@@ -249,55 +363,119 @@ async def fetch_polymarket_markets() -> list[dict]:
                 tag_text_parts.append(str(tag["slug"]))
 
         ev_text = " ".join([str(ev.get("title", "")), str(ev.get("description", ""))] + tag_text_parts)
+        category = _category_from_event_tags(ev)
+        tag_slugs = _event_tag_slugs(ev)
 
-        for m in ev.get("markets", []) or []:
-            if not isinstance(m, dict):
+        ev_markets_raw = [m for m in (ev.get("markets", []) or []) if isinstance(m, dict)]
+
+        if len(ev_markets_raw) <= 1:
+            for m in ev_markets_raw:
+                market_slug = str(m.get("slug") or m.get("id") or "")
+                question = str(m.get("question") or "")
+                if not market_slug or not question:
+                    continue
+
+                outcomes, outcome_prices = _parse_market_outcomes(m.get("outcomes"), m.get("outcomePrices"))
+                aligned = _align_outcomes_and_prices(outcomes, outcome_prices)
+                if not aligned:
+                    continue
+                outcomes, outcome_prices = aligned
+
+                probability = _safe_float(outcome_prices[0], 0.0)
+                prev_probability = _prev_prob_by_market_id.get(market_slug, probability)
+                _prev_prob_by_market_id[market_slug] = probability
+
+                volume_24h = _safe_float(m.get("volume24hr"), 0.0)
+                liquidity = _safe_float(m.get("liquidity"), 0.0)
+                image_url = str(m.get("image") or m.get("icon") or "")
+
+                outcomes_text = " ".join(outcomes)
+                market_text = " ".join([question, ev_text, outcomes_text])
+                keywords = _infer_keywords(market_text)
+
+                markets.append(
+                    {
+                        "market_id": market_slug,
+                        "title": question,
+                        "description": str(m.get("description") or ev.get("description") or ""),
+                        "probability": probability,
+                        "probability_prev": prev_probability,
+                        "volume_24h": volume_24h,
+                        "liquidity": liquidity,
+                        "keywords": keywords,
+                        "category": category,
+                        "tag_slugs": tag_slugs,
+                        "image_url": image_url,
+                        "resolution_source": str(m.get("resolutionSource") or ev.get("resolutionSource") or ""),
+                        "rules": _extract_rules(ev, m),
+                        "outcomes": outcomes,
+                        "outcome_prices": outcome_prices,
+                    }
+                )
+        else:
+            event_id = str(ev.get("slug") or ev.get("id") or "")
+            ev_title = str(ev.get("title") or "")
+            if not event_id or not ev_title:
                 continue
-            market_slug = str(m.get("slug") or m.get("id") or "")
-            question = str(m.get("question") or "")
-            if not market_slug or not question:
+
+            combined_outcomes: list[str] = []
+            combined_prices: list[float] = []
+            total_volume = 0.0
+            max_liquidity = 0.0
+            best_image = ""
+            question_texts: list[str] = []
+
+            for m in ev_markets_raw:
+                question = str(m.get("question") or "")
+                if not question:
+                    continue
+                raw_outcomes, raw_prices = _parse_market_outcomes(
+                    m.get("outcomes"), m.get("outcomePrices")
+                )
+                if not raw_prices:
+                    continue
+                yes_price = _safe_float(raw_prices[0], 0.0)
+                combined_outcomes.append(question)
+                combined_prices.append(yes_price)
+                total_volume += _safe_float(m.get("volume24hr"), 0.0)
+                max_liquidity = max(max_liquidity, _safe_float(m.get("liquidity"), 0.0))
+                if not best_image:
+                    best_image = str(m.get("image") or m.get("icon") or "")
+                question_texts.append(question)
+
+            if len(combined_outcomes) < 2:
                 continue
 
-            outcomes, outcome_prices = _parse_market_outcomes(m.get("outcomes"), m.get("outcomePrices"))
-            if not outcomes or len(outcomes) < 2 or not outcome_prices:
-                # 沒有完整 outcomes 就跳過（我們的 UI/計分都依賴它）
-                continue
+            top_price = max(combined_prices)
+            prev_probability = _prev_prob_by_market_id.get(event_id, top_price)
+            _prev_prob_by_market_id[event_id] = top_price
 
-            probability = _safe_float(outcome_prices[0], 0.0)
-            prev_probability = _prev_prob_by_market_id.get(market_slug, probability)
-            _prev_prob_by_market_id[market_slug] = probability
-
-            volume_24h = _safe_float(m.get("volume24hr"), 0.0)
-            liquidity = _safe_float(m.get("liquidity"), 0.0)
-
-            image_url = str(m.get("image") or m.get("icon") or "")
-
-            # 用事件/問題/結果文字去比對 location_map，提升解析成功率
-            outcomes_text = " ".join(outcomes)
-            market_text = " ".join([question, ev_text, outcomes_text])
-            keywords = _infer_keywords(market_text)
-
-            category = _infer_category(market_text)
+            all_text = " ".join([ev_title, str(ev.get("description", ""))] + question_texts + tag_text_parts)
+            keywords = _infer_keywords(all_text)
 
             markets.append(
                 {
-                    "market_id": market_slug,
-                    "title": question,
-                    "probability": probability,
+                    "market_id": event_id,
+                    "title": ev_title,
+                    "description": str(ev.get("description") or ""),
+                    "probability": top_price,
                     "probability_prev": prev_probability,
-                    "volume_24h": volume_24h,
-                    "liquidity": liquidity,
+                    "volume_24h": total_volume,
+                    "liquidity": max_liquidity,
                     "keywords": keywords,
                     "category": category,
-                    "image_url": image_url,
-                    "outcomes": outcomes,
-                    "outcome_prices": outcome_prices,
+                    "tag_slugs": tag_slugs,
+                    "image_url": best_image,
+                    "resolution_source": str(ev.get("resolutionSource") or ""),
+                    "rules": _extract_rules(ev, ev_markets_raw[0]),
+                    "outcomes": combined_outcomes,
+                    "outcome_prices": combined_prices,
                 }
             )
 
     # 依 24h 成交量取前面，讓後續計分更快
     markets.sort(key=lambda x: x.get("volume_24h", 0.0), reverse=True)
-    _markets_cache = markets[:max(settings.hotpoints_top_n * 5, 120)]
+    _markets_cache = markets[: settings.polymarket_markets_max_markets]
     _last_markets_fetch_at = now
     return _markets_cache
 
@@ -311,7 +489,9 @@ def get_cached_monitor_markets() -> list[dict]:
     if _monitor_markets_cache:
         return _monitor_markets_cache
     # 若快取尚未填滿，從 SQLite 載入上次資料（避免前端一直 loading）
-    _monitor_markets_cache = _load_monitor_markets_from_db(limit=300)
+    _monitor_markets_cache = _load_monitor_markets_from_db(
+        limit=settings.polymarket_monitor_max_markets
+    )
     return _monitor_markets_cache
 
 
@@ -320,13 +500,20 @@ def is_monitor_refreshing() -> bool:
     return _monitor_refresh_task is not None and not _monitor_refresh_task.done()
 
 
+def _cache_has_descriptions(markets: list[dict]) -> bool:
+    for m in markets:
+        if str(m.get("description") or "").strip():
+            return True
+    return False
+
+
 async def fetch_polymarket_monitor_markets() -> list[dict]:
     global _monitor_markets_cache, _last_monitor_markets_fetch_at, _prev_prob_by_market_id_monitor, _monitor_refresh_task
 
     now = datetime.now(timezone.utc)
     if _last_monitor_markets_fetch_at is not None:
         elapsed = (now - _last_monitor_markets_fetch_at).total_seconds()
-        if elapsed < max(settings.polymarket_refresh_seconds - 10, 180):
+        if elapsed < max(settings.polymarket_refresh_seconds - 10, 180) and _cache_has_descriptions(_monitor_markets_cache):
             return _monitor_markets_cache
 
     markets: list[dict] = []
@@ -344,6 +531,8 @@ async def fetch_polymarket_monitor_markets() -> list[dict]:
             params = {
                 "active": "true" if active else "false",
                 "closed": "true" if closed else "false",
+                "order": "volume24hr",
+                "ascending": "false",
                 "limit": str(batch_limit),
                 "offset": str(offset),
             }
@@ -367,49 +556,140 @@ async def fetch_polymarket_monitor_markets() -> list[dict]:
         return events[:max_events]
 
     # Active + closed(已結算/有結果) 都要抓，確保新事件與結果事件都能更新
-    # 為了避免一次處理過多導致快取很久才會填滿，這裡先做上限截斷。
-    active_events = await fetch_events(active=True, closed=False, max_events=40)
-    closed_events = await fetch_events(active=False, closed=True, max_events=20)
+    active_events = await fetch_events(
+        active=True, closed=False, max_events=settings.polymarket_monitor_max_active_events
+    )
+    closed_events = await fetch_events(
+        active=False, closed=True, max_events=settings.polymarket_monitor_max_closed_events
+    )
 
-    max_markets = 300
+    max_markets = settings.polymarket_monitor_max_markets
 
     events = active_events + closed_events
-    done = False
+    seen_ids: set[str] = set()
     for ev in events:
+        if len(markets) >= max_markets:
+            break
+
         ev_title = str(ev.get("title") or "")
         ev_description = str(ev.get("description") or "")
         ev_text = f"{ev_title} {ev_description}"
+        ev_markets_raw = [m for m in (ev.get("markets", []) or []) if isinstance(m, dict)]
 
-        for m in ev.get("markets", []) or []:
-            if done:
-                break
-            if not isinstance(m, dict):
+        category = _category_from_event_tags(ev)
+        tag_slugs = _event_tag_slugs(ev)
+
+        if len(ev_markets_raw) <= 1:
+            for m in ev_markets_raw:
+                if len(markets) >= max_markets:
+                    break
+                market_id = str(m.get("slug") or m.get("id") or "")
+                question = str(m.get("question") or "")
+                if not market_id or not question:
+                    continue
+                if market_id in seen_ids:
+                    continue
+                seen_ids.add(market_id)
+
+                outcomes, outcome_prices = _parse_market_outcomes(
+                    m.get("outcomes"), m.get("outcomePrices")
+                )
+                aligned = _align_outcomes_and_prices(outcomes, outcome_prices)
+                if not aligned:
+                    continue
+                outcomes, outcome_prices = aligned
+
+                probability = _safe_float(outcome_prices[0], 0.0)
+                prev_probability = _prev_prob_by_market_id_monitor.get(market_id, probability)
+                _prev_prob_by_market_id_monitor[market_id] = probability
+                probability_change = probability - prev_probability
+
+                volume_24h = _safe_float(m.get("volume24hr"), 0.0)
+                liquidity = _safe_float(m.get("liquidity"), 0.0)
+                image_url = str(m.get("image") or m.get("icon") or "")
+
+                outcomes_text = " ".join(outcomes)
+                market_text = " ".join([question, ev_text, outcomes_text])
+                keywords = _infer_keywords(market_text)
+
+                geo = geo_resolver.resolve(keywords) if keywords else None
+                lat = geo[0] if geo else 0.0
+                lng = geo[1] if geo else 0.0
+
+                mention_count = count_mentions(keywords, articles) if keywords else 0
+                hot_score = compute_hot_score(
+                    volume_24h=volume_24h,
+                    probability_change_24h=probability_change,
+                    news_mention_count=mention_count,
+                    liquidity=liquidity,
+                )
+
+                markets.append(
+                    {
+                        "market_id": market_id,
+                        "title": question,
+                        "description": str(m.get("description") or ev_description),
+                        "lat": lat,
+                        "lng": lng,
+                        "hot_score": hot_score,
+                        "volume_24h": volume_24h,
+                        "probability": probability,
+                        "probability_change_24h": probability_change,
+                        "news_mention_count": mention_count,
+                        "liquidity": liquidity,
+                        "category": category,
+                        "tag_slugs": tag_slugs,
+                        "image_url": image_url,
+                        "resolution_source": str(m.get("resolutionSource") or ev.get("resolutionSource") or ""),
+                        "rules": _extract_rules(ev, m),
+                        "outcomes": outcomes,
+                        "outcome_prices": outcome_prices,
+                        "updated_at": now,
+                    }
+                )
+        else:
+            event_id = str(ev.get("slug") or ev.get("id") or "")
+            if not event_id or not ev_title:
                 continue
-            market_id = str(m.get("slug") or m.get("id") or "")
-            question = str(m.get("question") or "")
-            if not market_id or not question:
+            if event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+
+            combined_outcomes: list[str] = []
+            combined_prices: list[float] = []
+            total_volume = 0.0
+            max_liquidity = 0.0
+            best_image = ""
+            question_texts: list[str] = []
+
+            for m in ev_markets_raw:
+                question = str(m.get("question") or "")
+                if not question:
+                    continue
+                raw_outcomes, raw_prices = _parse_market_outcomes(
+                    m.get("outcomes"), m.get("outcomePrices")
+                )
+                if not raw_prices:
+                    continue
+                yes_price = _safe_float(raw_prices[0], 0.0)
+                combined_outcomes.append(question)
+                combined_prices.append(yes_price)
+                total_volume += _safe_float(m.get("volume24hr"), 0.0)
+                max_liquidity = max(max_liquidity, _safe_float(m.get("liquidity"), 0.0))
+                if not best_image:
+                    best_image = str(m.get("image") or m.get("icon") or "")
+                question_texts.append(question)
+
+            if len(combined_outcomes) < 2:
                 continue
 
-            outcomes, outcome_prices = _parse_market_outcomes(
-                m.get("outcomes"), m.get("outcomePrices")
-            )
-            if not outcomes or len(outcomes) < 2 or not outcome_prices:
-                continue
+            top_price = max(combined_prices)
+            prev_probability = _prev_prob_by_market_id_monitor.get(event_id, top_price)
+            _prev_prob_by_market_id_monitor[event_id] = top_price
+            probability_change = top_price - prev_probability
 
-            probability = _safe_float(outcome_prices[0], 0.0)
-            prev_probability = _prev_prob_by_market_id_monitor.get(market_id, probability)
-            _prev_prob_by_market_id_monitor[market_id] = probability
-            probability_change = probability - prev_probability
-
-            volume_24h = _safe_float(m.get("volume24hr"), 0.0)
-            liquidity = _safe_float(m.get("liquidity"), 0.0)
-
-            image_url = str(m.get("image") or m.get("icon") or "")
-
-            outcomes_text = " ".join(outcomes)
-            market_text = " ".join([question, ev_text, outcomes_text])
-            keywords = _infer_keywords(market_text)
-            category = _infer_category(market_text)
+            all_text = " ".join([ev_title, ev_description] + question_texts)
+            keywords = _infer_keywords(all_text)
 
             geo = geo_resolver.resolve(keywords) if keywords else None
             lat = geo[0] if geo else 0.0
@@ -417,38 +697,38 @@ async def fetch_polymarket_monitor_markets() -> list[dict]:
 
             mention_count = count_mentions(keywords, articles) if keywords else 0
             hot_score = compute_hot_score(
-                volume_24h=volume_24h,
+                volume_24h=total_volume,
                 probability_change_24h=probability_change,
                 news_mention_count=mention_count,
-                liquidity=liquidity,
+                liquidity=max_liquidity,
             )
 
             markets.append(
                 {
-                    "market_id": market_id,
-                    "title": question,
+                    "market_id": event_id,
+                    "title": ev_title,
+                    "description": ev_description,
                     "lat": lat,
                     "lng": lng,
                     "hot_score": hot_score,
-                    "volume_24h": volume_24h,
-                    "probability": probability,
+                    "volume_24h": total_volume,
+                    "probability": top_price,
                     "probability_change_24h": probability_change,
                     "news_mention_count": mention_count,
-                    "liquidity": liquidity,
+                    "liquidity": max_liquidity,
                     "category": category,
-                    "image_url": image_url,
-                    "outcomes": outcomes,
-                    "outcome_prices": outcome_prices,
+                    "tag_slugs": tag_slugs,
+                    "image_url": best_image,
+                    "resolution_source": str(ev.get("resolutionSource") or ""),
+                    "rules": _extract_rules(ev, ev_markets_raw[0]),
+                    "outcomes": combined_outcomes,
+                    "outcome_prices": combined_prices,
                     "updated_at": now,
                 }
             )
 
-            if len(markets) >= max_markets:
-                done = True
-                break
-
     markets.sort(key=lambda x: x.get("volume_24h", 0.0), reverse=True)
-    _monitor_markets_cache = markets[:300]
+    _monitor_markets_cache = markets[: settings.polymarket_monitor_max_markets]
     _persist_monitor_markets_to_db(_monitor_markets_cache)
     _last_monitor_markets_fetch_at = now
     _monitor_refresh_task = None

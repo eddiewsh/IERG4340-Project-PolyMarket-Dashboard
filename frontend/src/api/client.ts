@@ -2,8 +2,13 @@ import type {
   HotGoodsResponse,
   HotPointsData,
   HotStocksResponse,
+  ImpactGraph,
+  ImpactMapRequest,
+  ImpactMapSummary,
   NewsFeedResponse,
   OthersResponse,
+  RagSummarizeRequest,
+  RagSummarizeResponse,
   StockMarketResponse,
 } from '../types'
 
@@ -56,4 +61,73 @@ export async function fetchHotGoods(): Promise<HotGoodsResponse> {
   const res = await fetch(`${BASE}/api/goods/hot`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
+}
+
+export async function ragSummarize(payload: RagSummarizeRequest): Promise<RagSummarizeResponse> {
+  const res = await fetch(`${BASE}/api/rag/summarize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function generateImpactMap(payload: ImpactMapRequest): Promise<ImpactGraph> {
+  const res = await fetch(`${BASE}/api/impact-map/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function saveImpactMap(payload: { map_id?: string; title: string; graph: ImpactGraph; event_kind?: string; event_id?: string }): Promise<{ map_id: string }> {
+  const res = await fetch(`${BASE}/api/impact-map/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function listImpactMaps(): Promise<ImpactMapSummary[]> {
+  const res = await fetch(`${BASE}/api/impact-map/list`)
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function loadImpactMap(mapId: string): Promise<{ map_id: string; title: string; graph: ImpactGraph }> {
+  const res = await fetch(`${BASE}/api/impact-map/${encodeURIComponent(mapId)}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function deleteImpactMap(mapId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/impact-map/${encodeURIComponent(mapId)}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `HTTP ${res.status}`)
+  }
+}
+
+export async function deleteRagConversation(conversationId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/rag/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `HTTP ${res.status}`)
+  }
 }

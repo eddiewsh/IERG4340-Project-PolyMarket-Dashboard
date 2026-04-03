@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+import re
 from typing import Any, Optional
 
 import httpx
@@ -13,15 +14,86 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.services.fmp_goods_hot import build_hot_goods
+from app.services.fmp_others import build_others
 from app.services.finnhub_hot import build_hot_large_value_stocks
 from app.services.news.client import ensure_news_cache, get_cached_articles
 from app.services.polymarket.client import get_cached_markets, get_cached_monitor_markets
-from app.services.rag.gemini_embedder import GeminiEmbedder
+from app.services.rag.gemini_embedder import GeminiChat, GeminiEmbedder
 from app.services.rag.rag_answer import RagAnswerService, chunk_text
 from app.services.rag.supabase_store import RagChunk, SupabaseRagStore
 
 
 router = APIRouter()
+
+def _build_event_summary_prompt(subject: str, market_context: list[dict[str, Any]]) -> str:
+    market_blocks: list[str] = []
+    for m in market_context[:3]:
+        market_blocks.append(
+            f"- {m.get('title','')} | Prob: {float(m.get('probability', 0))*100:.1f}% | "
+            f"Vol24h: ${float(m.get('volume_24h', 0)):,.0f}\n"
+            f"  Description: {str(m.get('description') or '')[:400]}"
+        )
+    return (
+        "You are a research assistant. Use Google Search Grounding to find relevant public information, then summarize.\n"
+        f"Event subject: {subject}\n\n"
+        "Related Polymarket market data:\n"
+        f"{chr(10).join(market_blocks) if market_blocks else '(none)'}\n\n"
+        "Respond in English and strictly follow this format:\n"
+        "## One-line takeaway\n"
+        "- One plain sentence on what the market is pricing.\n\n"
+        "## Key points (3-6)\n"
+        "- One sentence per bullet.\n\n"
+        "## Risks & uncertainty (2-4)\n"
+        "- One sentence per bullet on what could make the call wrong.\n\n"
+        "## What it means (actionable read)\n"
+        "- Conservative: ...\n"
+        "- Neutral: ...\n"
+        "- Aggressive: ...\n\n"
+        "## Sources (required)\n"
+        "- [Source name](URL)\n"
+        "- [Source name](URL)\n\n"
+        "Rules:\n"
+        "1) List URLs you actually found via Grounding.\n"
+        "2) If credible sources are insufficient, output:\n"
+        "   Insufficient data: no strong sources found; treat conclusions as low confidence.\n"
+        "3) Do not invent sources or URLs."
+    )
+
+
+def _build_news_summary_prompt(
+    title: str,
+    description: str | None,
+    news_source: str | None,
+    url: str | None,
+) -> str:
+    desc = (description or "")[:1200]
+    src = (news_source or "").strip() or "(unknown)"
+    u = (url or "").strip() or "(none)"
+    return (
+        "You are a news assistant. Use Google Search Grounding for related public information and reconcile with the snippet below.\n"
+        f"Title: {title}\n"
+        f"Outlet / source: {src}\n"
+        f"Summary or excerpt: {desc or '(none)'}\n"
+        f"Original URL: {u}\n\n"
+        "Respond in English and strictly follow this format:\n"
+        "## Headline in one line\n"
+        "- One plain sentence.\n\n"
+        "## Key points (3-6)\n"
+        "- One sentence per bullet.\n\n"
+        "## Risks & uncertainty (2-4)\n"
+        "- One sentence per bullet.\n\n"
+        "## What it means (actionable read)\n"
+        "- Conservative: ...\n"
+        "- Neutral: ...\n"
+        "- Aggressive: ...\n\n"
+        "## Sources (required)\n"
+        "- [Source name](URL)\n\n"
+        "Rules:\n"
+        "1) List URLs you actually found via Grounding.\n"
+        "2) If credible sources are insufficient, say so explicitly.\n"
+        "3) Do not invent sources or URLs."
+    )
+
 
 def _sb_headers() -> dict[str, str]:
     return {
@@ -69,6 +141,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     top_k: int = Field(8, ge=1, le=20)
     source: Optional[str] = None
+    extra_instructions: Optional[str] = Field(None, max_length=2000)
 
 
 class ChatResponse(BaseModel):
@@ -81,6 +154,24 @@ class ConversationSummary(BaseModel):
     conversation_id: str
     title: str
     updated_at: str
+
+
+class RagSummarizeRequest(BaseModel):
+    kind: str = Field(..., pattern="^(polymarket|stock|other|news)$")
+    title: Optional[str] = None
+    symbol: Optional[str] = None
+    market_id: Optional[str] = None
+    description: Optional[str] = None
+    probability: Optional[float] = None
+    volume_24h: Optional[float] = None
+    url: Optional[str] = None
+    news_source: Optional[str] = None
+
+
+class RagSummarizeResponse(BaseModel):
+    answer: str
+    hits: list[dict[str, Any]]
+    live_news: list[dict[str, Any]]
 
 
 @router.post("/rag/ingest", response_model=RagIngestResponse)
@@ -169,9 +260,19 @@ async def rag_chat(req: ChatRequest):
     except Exception:
         goods = []
 
+    extra = (req.extra_instructions or "").strip()[:2000] or None
     svc = RagAnswerService()
     try:
-        result = await svc.answer(req.question, top_k=req.top_k, source_filter=req.source, news=all_news, markets=all_markets, stocks=stocks, goods=goods)
+        result = await svc.answer(
+            req.question,
+            top_k=req.top_k,
+            source_filter=req.source,
+            news=all_news,
+            markets=all_markets,
+            stocks=stocks,
+            goods=goods,
+            extra_instructions=extra,
+        )
     except Exception as e:
         err = str(e)
         logger.error("rag_chat error: %s", err, exc_info=True)
@@ -195,6 +296,110 @@ async def rag_chat(req: ChatRequest):
         )
 
     return ChatResponse(conversation_id=conv_id, answer=answer, hits=result["hits"])
+
+
+@router.post("/rag/summarize", response_model=RagSummarizeResponse)
+async def rag_summarize(req: RagSummarizeRequest):
+    kind = req.kind.strip().lower()
+    title = (req.title or "").strip()
+    symbol = (req.symbol or "").strip()
+    market_id = (req.market_id or "").strip()
+
+    if kind == "news":
+        if not title:
+            raise HTTPException(status_code=422, detail="Missing summarize subject.")
+        question = _build_news_summary_prompt(
+            title,
+            req.description,
+            req.news_source,
+            req.url,
+        )
+        try:
+            answer = await GeminiChat().generate(question, use_grounding=True)
+        except Exception as e:
+            err = str(e)
+            logger.error("rag_summarize error: %s", err, exc_info=True)
+            if "403" in err or "forbidden" in err.lower():
+                raise HTTPException(status_code=502, detail="Gemini API forbidden (check GEMINI_API_KEY / model permission).")
+            if "rate limit" in err.lower() or "429" in err:
+                raise HTTPException(status_code=429, detail="API rate limit exceeded, please try again shortly.")
+            raise HTTPException(status_code=502, detail=err)
+        return RagSummarizeResponse(answer=answer, hits=[], live_news=[])
+
+    if kind == "polymarket":
+        subject = title or market_id
+    else:
+        subject = title or symbol
+    if not subject:
+        raise HTTPException(status_code=422, detail="Missing summarize subject.")
+
+    live_news: list[dict[str, Any]] = []
+    all_markets = get_cached_markets() + get_cached_monitor_markets()
+
+    try:
+        stocks = await build_hot_large_value_stocks()
+    except Exception:
+        stocks = []
+    try:
+        goods = await build_hot_goods()
+    except Exception:
+        goods = []
+    try:
+        others = await build_others()
+    except Exception:
+        others = {"fx": [], "energy": [], "metals": []}
+
+    if kind == "stock":
+        target_markets = []
+        target_stocks = [s for s in stocks if symbol and str(s.get("symbol", "")).upper() == symbol.upper()] or stocks
+        target_goods = []
+    elif kind == "other":
+        target_markets = []
+        flat_others = (others.get("fx") or []) + (others.get("energy") or []) + (others.get("metals") or [])
+        target_goods = [g for g in (goods + flat_others) if symbol and str(g.get("symbol", "")).upper() == symbol.upper()] or (goods + flat_others)
+        target_stocks = []
+    else:
+        matched = [
+            m for m in all_markets
+            if (market_id and str(m.get("market_id", "")) == market_id)
+            or (title and title.lower() in str(m.get("title", "")).lower())
+        ]
+        if matched:
+            primary: dict[str, Any] = dict(matched[0])
+        else:
+            primary = {"title": title, "market_id": market_id}
+        if req.description is not None:
+            primary["description"] = req.description
+        if req.probability is not None:
+            primary["probability"] = req.probability
+        if req.volume_24h is not None:
+            primary["volume_24h"] = req.volume_24h
+        has_client_snapshot = any(
+            x is not None for x in (req.description, req.probability, req.volume_24h)
+        )
+        if matched:
+            target_markets = [primary] + matched[1:]
+        elif has_client_snapshot:
+            target_markets = [primary]
+        else:
+            target_markets = list(all_markets)
+        target_stocks = stocks
+        target_goods = goods
+
+    question = _build_event_summary_prompt(subject, target_markets)
+
+    try:
+        answer = await GeminiChat().generate(question, use_grounding=True)
+        result = {"answer": answer, "hits": []}
+    except Exception as e:
+        err = str(e)
+        logger.error("rag_summarize error: %s", err, exc_info=True)
+        if "403" in err or "forbidden" in err.lower():
+            raise HTTPException(status_code=502, detail="Gemini API forbidden (check GEMINI_API_KEY / model permission).")
+        if "rate limit" in err.lower() or "429" in err:
+            raise HTTPException(status_code=429, detail="API rate limit exceeded, please try again shortly.")
+        raise HTTPException(status_code=502, detail=err)
+    return RagSummarizeResponse(answer=result["answer"], hits=result["hits"], live_news=live_news[:20])
 
 
 @router.get("/rag/conversations", response_model=list[ConversationSummary])
@@ -223,4 +428,29 @@ async def rag_conversation_messages(conversation_id: str):
         )
         data = r.json() if r.status_code == 200 else []
     return [ChatMessage(**d) for d in data] if isinstance(data, list) else []
+
+
+@router.delete("/rag/conversations/{conversation_id}")
+async def rag_delete_conversation(conversation_id: str):
+    cid = (conversation_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=422, detail="Missing conversation id.")
+    base = _sb_url()
+    headers = _sb_headers()
+    with httpx.Client(timeout=15) as c:
+        r0 = c.delete(
+            f"{base}/rest/v1/rag_messages",
+            headers=headers,
+            params={"conversation_id": f"eq.{cid}"},
+        )
+        r1 = c.delete(
+            f"{base}/rest/v1/rag_conversations",
+            headers=headers,
+            params={"conversation_id": f"eq.{cid}"},
+        )
+    if r1.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Failed to delete conversation: {r1.text}")
+    if r0.status_code >= 400 and r0.status_code != 404:
+        logger.warning("rag_messages delete status=%s body=%s", r0.status_code, r0.text)
+    return {"ok": True, "conversation_id": cid}
 

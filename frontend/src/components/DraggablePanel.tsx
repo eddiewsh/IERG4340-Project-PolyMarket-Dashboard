@@ -41,9 +41,9 @@ export default function DraggablePanel({
       className={`absolute z-30 ${className}`}
       style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
     >
-      <div className="rounded-xl border border-white/[0.12] bg-black/55 backdrop-blur-md shadow-lg overflow-hidden w-[min(320px,92vw)]">
+      <div className="rounded-xl border border-slate-200 bg-white/95 backdrop-blur-md shadow-lg shadow-slate-200/50 overflow-hidden w-[min(320px,92vw)]">
         <div
-          className="px-3 py-2 text-[11px] text-text-muted border-b border-white/[0.06] cursor-move select-none flex items-center justify-between"
+          className="px-3 py-2 text-[11px] text-text-muted border-b border-slate-200 cursor-move select-none flex items-center justify-between"
           onMouseDown={(e) => {
             dragging.current = true
             start.current = { mx: e.clientX, my: e.clientY, x: pos.x, y: pos.y }

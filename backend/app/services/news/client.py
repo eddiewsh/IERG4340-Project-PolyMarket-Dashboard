@@ -23,6 +23,7 @@ _breaking_lock = asyncio.Lock()
 
 _api_call_counts: dict[str, int] = {"gnews": 0, "worldnews": 0, "newsdata": 0}
 _api_count_reset_date: Optional[str] = None
+_quota_exhausted_log_date: dict[str, str] = {}
 
 
 def _reset_daily_counts_if_needed() -> None:
@@ -35,6 +36,17 @@ def _reset_daily_counts_if_needed() -> None:
         _api_count_reset_date = today
 
 
+def _quota_allows(provider: str) -> bool:
+    _reset_daily_counts_if_needed()
+    limits = {
+        "gnews": settings.gnews_daily_limit,
+        "worldnews": settings.worldnews_daily_limit,
+        "newsdata": settings.newsdata_daily_limit,
+    }
+    limit = limits.get(provider, 999999)
+    return _api_call_counts.get(provider, 0) < limit
+
+
 def _check_quota(provider: str) -> bool:
     _reset_daily_counts_if_needed()
     limits = {
@@ -45,7 +57,10 @@ def _check_quota(provider: str) -> bool:
     limit = limits.get(provider, 999999)
     current = _api_call_counts.get(provider, 0)
     if current >= limit:
-        logger.warning("quota exhausted for %s (%d/%d)", provider, current, limit)
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if _quota_exhausted_log_date.get(provider) != day:
+            _quota_exhausted_log_date[provider] = day
+            logger.warning("quota exhausted for %s (%d/%d)", provider, current, limit)
         return False
     return True
 
@@ -54,59 +69,6 @@ def _record_api_call(provider: str) -> None:
     _reset_daily_counts_if_needed()
     _api_call_counts[provider] = _api_call_counts.get(provider, 0) + 1
 
-
-def _sb_headers() -> dict[str, str]:
-    return {
-        "apikey": settings.supabase_service_role_key,
-        "Authorization": f"Bearer {settings.supabase_service_role_key}",
-        "Content-Type": "application/json",
-    }
-
-
-def _sb_url() -> str:
-    return settings.supabase_url.rstrip("/")
-
-
-def _read_supabase_cache(cache_key: str, max_age_s: float) -> Optional[list[dict]]:
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        return None
-    try:
-        with httpx.Client(timeout=8) as c:
-            r = c.get(
-                f"{_sb_url()}/rest/v1/news_cache",
-                headers=_sb_headers(),
-                params={"cache_key": f"eq.{cache_key}", "select": "data,updated_at"},
-            )
-            if r.status_code != 200:
-                return None
-            rows = r.json()
-            if not rows:
-                return None
-            row = rows[0]
-            updated = datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - updated).total_seconds()
-            if age > max_age_s:
-                return None
-            data = row.get("data")
-            return data if isinstance(data, list) else None
-    except Exception:
-        return None
-
-
-def _write_supabase_cache(cache_key: str, data: list[dict]) -> None:
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        return
-    now = datetime.now(timezone.utc).isoformat()
-    try:
-        payload = {"cache_key": cache_key, "data": data, "updated_at": now}
-        with httpx.Client(timeout=10) as c:
-            c.post(
-                f"{_sb_url()}/rest/v1/news_cache",
-                headers={**_sb_headers(), "Prefer": "return=minimal,resolution=merge-duplicates"},
-                json=payload,
-            )
-    except Exception:
-        pass
 
 _location_keys: list[str] = []
 _location_map_path = Path(settings.data_dir) / "location_map.json"
@@ -305,29 +267,57 @@ def _infer_regions(
     keywords: list[str],
 ) -> list[str]:
     cc = (country_code or "").lower().strip()
-    text = f"{title} {description}".lower()
+    raw = f"{title} {description}"
+    text = raw.lower()
     kw = " ".join(keywords).lower()
     blob = f"{text} {kw}"
     out: list[str] = []
 
-    if "hong kong" in blob or "香港" in f"{title} {description}" or cc == "hk":
+    if "hong kong" in blob or "香港" in raw or cc == "hk":
         out.append("hong_kong")
     if (
         "china" in blob
         or "beijing" in blob
         or "shanghai" in blob
         or "shenzhen" in blob
+        or "中國" in raw
+        or "北京" in raw
+        or "上海" in raw
+        or "廣州" in raw
+        or "深圳" in raw
         or cc == "cn"
         or "china" in kw
     ):
         out.append("china")
-    if "japan" in blob or "tokyo" in blob or "osaka" in blob or cc == "jp":
+    if (
+        "japan" in blob
+        or "tokyo" in blob
+        or "osaka" in blob
+        or "日本" in raw
+        or "東京" in raw
+        or "大阪" in raw
+        or "京都" in raw
+        or "日圓" in raw
+        or "日韓" in raw
+        or "日股" in raw
+        or "日本央行" in raw
+        or cc == "jp"
+    ):
         out.append("japan")
     if (
         "south korea" in blob
         or "north korea" in blob
         or "seoul" in blob
         or "pyongyang" in blob
+        or "韓國" in raw
+        or "南韓" in raw
+        or "北韓" in raw
+        or "首爾" in raw
+        or "釜山" in raw
+        or "平壤" in raw
+        or "朝鮮" in raw
+        or "韓元" in raw
+        or "韓股" in raw
         or cc == "kr"
         or "korea" in kw
     ):
@@ -338,15 +328,92 @@ def _infer_regions(
         or "u.s " in blob
         or "washington" in blob
         or "pentagon" in blob
+        or "美國" in raw
+        or "白宮" in raw
+        or "華府" in raw
+        or "五角大廈" in raw
         or cc == "us"
     ):
         out.append("us")
-    if cc in _ASIA_CC:
+    if (
+        cc in _ASIA_CC
+        or "亞洲" in raw
+        or "東南亞" in raw
+        or "東協" in raw
+        or "東盟" in raw
+        or "asean" in blob
+        or "singapore" in blob
+        or "馬來西亞" in raw
+        or "印尼" in raw
+        or "越南" in raw
+        or "菲律賓" in raw
+        or "印度" in raw
+        or "台灣" in raw
+        or "臺灣" in raw
+    ):
         out.append("asia")
-    if cc in _EUROPE_CC:
+    if (
+        cc in _EUROPE_CC
+        or "歐盟" in raw
+        or "歐洲" in raw
+        or "英國" in raw
+        or "法國" in raw
+        or "德國" in raw
+        or "義大利" in raw
+        or "西班牙" in raw
+        or "烏克蘭" in raw
+        or "俄羅斯" in raw
+        or "北約" in raw
+    ):
         out.append("europe")
-    if cc in _ME_CC or "gaza" in blob or "israel" in blob or "iran" in blob or "syria" in blob:
+    if (
+        cc in _ME_CC
+        or "gaza" in blob
+        or "israel" in blob
+        or "iran" in blob
+        or "syria" in blob
+        or "以色列" in raw
+        or "伊朗" in raw
+        or "沙烏地" in raw
+        or "阿拉伯" in raw
+        or "杜拜" in raw
+        or "中東" in raw
+        or "以巴" in raw
+        or "以伊" in raw
+    ):
         out.append("middle_east")
+
+    if (
+        "federal reserve" in blob
+        or "interest rate" in blob
+        or "nasdaq" in blob
+        or "s&p" in blob
+        or "stock market" in blob
+        or "wall street" in blob
+        or "forex" in blob
+        or "earnings" in blob
+        or "bitcoin" in blob
+        or "ethereum" in blob
+        or "etf" in blob
+        or " sec " in blob
+        or "treasury" in blob
+        or "inflation" in blob
+        or "gdp" in blob
+        or "central bank" in blob
+        or "nikkei" in blob
+        or "kospi" in blob
+        or "shanghai composite" in blob
+        or "hang seng" in blob
+        or "opec" in blob
+        or "nvidia" in blob
+        or "tesla" in blob
+        or "財經" in raw
+        or "股市" in raw
+        or "華爾街" in raw
+        or "聯儲" in raw
+        or (re.search(r"\b(fed|ecb|boj|boe|pboc)\b", blob) is not None)
+    ):
+        out.append("finance")
 
     if not out:
         out.append("other")
@@ -450,6 +517,10 @@ async def _fetch_gnews() -> list[dict]:
     out: list[dict] = []
     try:
         _record_api_call("gnews")
+        logger.info(
+            "news_api fetch gnews GET /api/v4/top-headlines category=general max=%s",
+            settings.gnews_max_articles,
+        )
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://gnews.io/api/v4/top-headlines",
@@ -467,7 +538,9 @@ async def _fetch_gnews() -> list[dict]:
             n = _parse_gnews_raw(a, "")
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api gnews top-headlines ok articles=%s", len(out))
+    except Exception as e:
+        logger.debug("news_api gnews top-headlines failed: %s", e)
         return []
     return out
 
@@ -478,6 +551,11 @@ async def _gnews_top_headlines_country(country: str, max_n: int) -> list[dict]:
     out: list[dict] = []
     try:
         _record_api_call("gnews")
+        logger.info(
+            "news_api fetch gnews GET /api/v4/top-headlines country=%s max=%s",
+            country,
+            max_n,
+        )
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://gnews.io/api/v4/top-headlines",
@@ -495,7 +573,9 @@ async def _gnews_top_headlines_country(country: str, max_n: int) -> list[dict]:
             n = _parse_gnews_raw(a, country)
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api gnews top-headlines country=%s ok articles=%s", country, len(out))
+    except Exception as e:
+        logger.debug("news_api gnews top-headlines country=%s failed: %s", country, e)
         return []
     return out
 
@@ -506,6 +586,8 @@ async def _gnews_search(q: str, max_n: int) -> list[dict]:
     out: list[dict] = []
     try:
         _record_api_call("gnews")
+        q_preview = (q[:120] + "…") if len(q) > 120 else q
+        logger.info("news_api fetch gnews GET /api/v4/search q=%r max=%s", q_preview, max_n)
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://gnews.io/api/v4/search",
@@ -522,7 +604,9 @@ async def _gnews_search(q: str, max_n: int) -> list[dict]:
             n = _parse_gnews_raw(a, "")
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api gnews search ok articles=%s", len(out))
+    except Exception as e:
+        logger.debug("news_api gnews search failed: %s", e)
         return []
     return out
 
@@ -558,6 +642,10 @@ async def _fetch_worldnews() -> list[dict]:
     out: list[dict] = []
     try:
         _record_api_call("worldnews")
+        logger.info(
+            "news_api fetch worldnews GET search-news text=world number=%s",
+            settings.worldnews_max_articles,
+        )
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://api.worldnewsapi.com/search-news",
@@ -577,7 +665,9 @@ async def _fetch_worldnews() -> list[dict]:
             n = _parse_worldnews_raw(a, "")
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api worldnews search-news ok items=%s", len(out))
+    except Exception as e:
+        logger.debug("news_api worldnews search-news failed: %s", e)
         return []
     return out
 
@@ -587,6 +677,11 @@ async def _worldnews_country(source_country: str, number: int) -> list[dict]:
         return []
     out: list[dict] = []
     try:
+        logger.info(
+            "news_api fetch worldnews GET search-news source_country=%s number=%s",
+            source_country,
+            number,
+        )
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://api.worldnewsapi.com/search-news",
@@ -606,7 +701,9 @@ async def _worldnews_country(source_country: str, number: int) -> list[dict]:
             n = _parse_worldnews_raw(a, source_country)
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api worldnews country=%s ok items=%s", source_country, len(out))
+    except Exception as e:
+        logger.debug("news_api worldnews country=%s failed: %s", source_country, e)
         return []
     return out
 
@@ -616,6 +713,8 @@ async def _worldnews_text(text: str, number: int) -> list[dict]:
         return []
     out: list[dict] = []
     try:
+        t_preview = (text[:120] + "…") if len(text) > 120 else text
+        logger.info("news_api fetch worldnews GET search-news text=%r number=%s", t_preview, number)
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://api.worldnewsapi.com/search-news",
@@ -634,7 +733,9 @@ async def _worldnews_text(text: str, number: int) -> list[dict]:
             n = _parse_worldnews_raw(a, "")
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api worldnews text search ok items=%s", len(out))
+    except Exception as e:
+        logger.debug("news_api worldnews text search failed: %s", e)
         return []
     return out
 
@@ -673,6 +774,10 @@ async def _fetch_newsdata() -> list[dict]:
     out: list[dict] = []
     try:
         _record_api_call("newsdata")
+        logger.info(
+            "news_api fetch newsdata GET /api/1/news q=<default bundle> size=%s",
+            settings.newsdata_max_articles,
+        )
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://newsdata.io/api/1/news",
@@ -690,7 +795,9 @@ async def _fetch_newsdata() -> list[dict]:
             n = _parse_newsdata_raw(a, "")
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api newsdata default q ok results=%s", len(out))
+    except Exception as e:
+        logger.debug("news_api newsdata default q failed: %s", e)
         return []
     return out
 
@@ -700,6 +807,11 @@ async def _newsdata_country(country: str, size: int) -> list[dict]:
         return []
     out: list[dict] = []
     try:
+        logger.info(
+            "news_api fetch newsdata GET /api/1/news country=%s size=%s",
+            country,
+            size,
+        )
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://newsdata.io/api/1/news",
@@ -717,7 +829,69 @@ async def _newsdata_country(country: str, size: int) -> list[dict]:
             n = _parse_newsdata_raw(a, country)
             if n:
                 out.append(n)
-    except Exception:
+        logger.info("news_api newsdata country=%s ok results=%s", country, len(out))
+    except Exception as e:
+        logger.debug("news_api newsdata country=%s failed: %s", country, e)
+        return []
+    return out
+
+
+async def newsdata_search(
+    query: str,
+    size: int = 20,
+    language: Optional[str] = "en",
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+) -> list[dict]:
+    if not (settings.news_api_key2 or settings.news_api_key):
+        return []
+    q = (query or "").strip()
+    if not q:
+        return []
+    out: list[dict] = []
+    try:
+        q_prev = (q[:100] + "…") if len(q) > 100 else q
+        async with httpx.AsyncClient(timeout=25) as client:
+            last_err: Exception | None = None
+            raw: list[dict] = []
+            for key_idx, api_key in enumerate((settings.news_api_key2, settings.news_api_key)):
+                if not api_key:
+                    continue
+                try:
+                    logger.info(
+                        "news_api fetch newsdata GET /api/1/news search q=%r size=%s env_key=%s",
+                        q_prev,
+                        size,
+                        "NEWS_API_KEY2" if key_idx == 0 else "NEWS_API_KEY",
+                    )
+                    resp = await client.get(
+                        "https://newsdata.io/api/1/news",
+                        params={
+                            "apikey": api_key,
+                            "q": q,
+                            "size": str(max(1, min(int(size), 50))),
+                            **({"language": language} if language else {}),
+                            **({"from_date": from_date} if from_date else {}),
+                            **({"to_date": to_date} if to_date else {}),
+                        },
+                    )
+                    resp.raise_for_status()
+                    raw = (resp.json() or {}).get("results") or []
+                    logger.info("news_api newsdata search ok results=%s", len(raw))
+                    break
+                except Exception as e:
+                    last_err = e
+                    raw = []
+                    logger.debug("news_api newsdata search key_slot failed: %s", e)
+            else:
+                if last_err:
+                    raise last_err
+        for a in raw:
+            n = _parse_newsdata_raw(a, "")
+            if n:
+                out.append(n)
+    except Exception as e:
+        logger.debug("news_api newsdata search failed: %s", e)
         return []
     return out
 
@@ -726,11 +900,272 @@ def _strip_html(s: str) -> str:
     return re.sub(r"<[^>]+>", "", s or "").strip()
 
 
+def _xml_local(tag: str) -> str:
+    if tag and "}" in tag:
+        return tag.split("}", 1)[1]
+    return tag or ""
+
+
+def _xml_text(elem: Optional[ET.Element]) -> str:
+    if elem is None:
+        return ""
+    raw = "".join(elem.itertext())
+    return _strip_html(raw)
+
+
+_RSS_FEED_ROWS: list[tuple[str, Optional[str]]] = [
+    ("https://www.scmp.com/rss/2/feed", "hong_kong"),
+    ("https://www.hongkongfp.com/feed/", "hong_kong"),
+    ("https://feeds.feedburner.com/rsscna/mainland", "china"),
+    ("https://www.scmp.com/rss/4/feed", "china"),
+    ("https://dedicated.wallstreetcn.com/rss.xml", "china"),
+    ("https://dedicated.wallstreetcn.com/rss.xml", "finance"),
+    ("https://feeds.feedburner.com/rsscna/intworld", None),
+    ("https://feeds.feedburner.com/rsscna/politics", "us"),
+    ("https://www.scmp.com/rss/3/feed", "asia"),
+    ("https://feeds.reuters.com/reuters/asiaNews", "asia"),
+    ("http://feeds.bbci.co.uk/news/world/asia/rss.xml", "asia"),
+    ("http://feeds.bbci.co.uk/news/rss.xml", None),
+    ("https://feeds.reuters.com/reuters/topNews", None),
+    ("https://www.aljazeera.com/xml/rss/all.xml", None),
+    ("https://www.aljazeera.com/xml/rss/all.xml", "middle_east"),
+    ("https://feeds.reuters.com/reuters/asiaNews", "china"),
+    ("https://en.yna.co.kr/RSS/news.xml", "korea"),
+    ("http://world.kbs.co.kr/rss/rss_news.htm?lang=e", "korea"),
+    ("http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml", "us"),
+    ("http://feeds.bbci.co.uk/news/world/europe/rss.xml", "europe"),
+    ("http://feeds.bbci.co.uk/news/world/middle_east/rss.xml", "middle_east"),
+    ("https://feeds.reuters.com/Reuters/worldNews", "other"),
+    ("https://globalvoices.org/feed/", "other"),
+]
+
+
+def _feed_channel_title(root: ET.Element) -> str:
+    ch = None
+    for el in root.iter():
+        if _xml_local(el.tag) == "channel":
+            ch = el
+            break
+    if ch is None:
+        return ""
+    for el in ch:
+        if _xml_local(el.tag) == "title":
+            return (el.text or "").strip()
+    return ""
+
+
+def _feed_atom_title(root: ET.Element) -> str:
+    for el in root:
+        if _xml_local(el.tag) == "title":
+            return (el.text or "").strip()
+    return ""
+
+
+def _parse_rss2_items(root: ET.Element, max_n: int) -> tuple[str, list[tuple[str, str, str, str, Optional[str]]]]:
+    src = _feed_channel_title(root) or "RSS"
+    out: list[tuple[str, str, str, str, Optional[str]]] = []
+    channel = None
+    for el in root.iter():
+        if _xml_local(el.tag) == "channel":
+            channel = el
+            break
+    if channel is None:
+        return src, out
+    n = 0
+    for item in channel:
+        if _xml_local(item.tag) != "item":
+            continue
+        if n >= max_n:
+            break
+        title = ""
+        link = ""
+        desc = ""
+        pub = ""
+        img: Optional[str] = None
+        for ch in item:
+            ln = _xml_local(ch.tag)
+            if ln == "title":
+                title = ((ch.text or "").strip() or _xml_text(ch)).strip()
+            elif ln == "link":
+                link = (ch.text or "").strip()
+            elif ln == "description":
+                desc = _xml_text(ch)
+            elif ln == "pubDate":
+                pub = (ch.text or "").strip()
+            elif ch.tag.endswith("}date") or ln == "date":
+                if not pub:
+                    pub = (ch.text or "").strip()
+            elif ln in ("content", "encoded") or ln.endswith("encoded"):
+                if not desc:
+                    desc = _xml_text(ch)
+            elif ln == "thumbnail" and (ch.get("url") or "").strip():
+                img = (ch.get("url") or "").strip()
+            elif ln == "group":
+                for sub in ch:
+                    if _xml_local(sub.tag) == "thumbnail" and (sub.get("url") or "").strip():
+                        img = (sub.get("url") or "").strip()
+                        break
+        if title:
+            out.append((title, link, desc[:4000], pub, img))
+            n += 1
+    return src, out
+
+
+def _parse_atom_items(root: ET.Element, max_n: int) -> tuple[str, list[tuple[str, str, str, str, Optional[str]]]]:
+    src = _feed_atom_title(root) or "Atom"
+    out: list[tuple[str, str, str, str, Optional[str]]] = []
+    n = 0
+    for entry in root:
+        if _xml_local(entry.tag) != "entry":
+            continue
+        if n >= max_n:
+            break
+        title = ""
+        link = ""
+        desc = ""
+        pub = ""
+        for ch in entry:
+            ln = _xml_local(ch.tag)
+            if ln == "title":
+                title = (ch.text or "").strip()
+            elif ln == "link" and ch.get("href"):
+                link = (ch.get("href") or "").strip()
+            elif ln in ("summary", "content"):
+                if not desc:
+                    desc = _xml_text(ch)
+            elif ln in ("published", "updated"):
+                if not pub:
+                    pub = (ch.text or "").strip()
+        if title:
+            out.append((title, link, desc[:4000], pub, None))
+            n += 1
+    return src, out
+
+
+def _parse_feed_xml(content: bytes, max_n: int) -> tuple[str, list[tuple[str, str, str, str, Optional[str]]]]:
+    root = ET.fromstring(content)
+    ln = _xml_local(root.tag)
+    if ln == "feed":
+        return _parse_atom_items(root, max_n)
+    if ln == "rss":
+        return _parse_rss2_items(root, max_n)
+    if ln == "RDF":
+        for ch in root:
+            if _xml_local(ch.tag) == "channel":
+                title_el = None
+                for x in ch:
+                    if _xml_local(x.tag) == "title":
+                        title_el = x
+                        break
+                src = (title_el.text or "").strip() if title_el is not None else "RSS"
+                items: list[tuple[str, str, str, str, Optional[str]]] = []
+                n = 0
+                for item in root:
+                    if _xml_local(item.tag) != "item":
+                        continue
+                    if n >= max_n:
+                        break
+                    t = l = d = p = ""
+                    for z in item:
+                        zn = _xml_local(z.tag)
+                        if zn == "title":
+                            t = (z.text or "").strip()
+                        elif zn == "link":
+                            l = (z.text or "").strip()
+                        elif zn == "description":
+                            d = _xml_text(z)
+                        elif zn == "date":
+                            p = (z.text or "").strip()
+                    if t:
+                        items.append((t, l, d[:4000], p, None))
+                        n += 1
+                return src, items
+    return "Unknown", []
+
+
+def _apply_region_hints(n: dict, hints: list[Optional[str]]) -> None:
+    str_hints = [h for h in hints if h]
+    inferred = n.get("regions") or []
+    if not str_hints:
+        return
+    n["regions"] = list(dict.fromkeys(str_hints + inferred))
+
+
+async def _fetch_rss_feed_url(
+    url: str,
+    hints: list[Optional[str]],
+    max_items: int,
+) -> list[dict]:
+    out: list[dict] = []
+    try:
+        logger.info("news_rss GET %s", url[:100])
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "PolyMonitor/1.0 (RSS aggregator)"},
+            )
+            resp.raise_for_status()
+            body = resp.content
+        src_name, rows = _parse_feed_xml(body, max(1, min(max_items, 120)))
+        cc = ""
+        if hints:
+            h0 = next((h for h in hints if h), None)
+            if h0 == "hong_kong":
+                cc = "hk"
+            elif h0 == "china":
+                cc = "cn"
+            elif h0 == "japan":
+                cc = "jp"
+            elif h0 == "korea":
+                cc = "kr"
+            elif h0 == "us":
+                cc = "us"
+        prov = "rss_wscn" if "wallstreetcn.com" in url else "rss"
+        for title, link, desc, pub, image_url in rows:
+            n = _normalize_merged(
+                title=title,
+                description=desc,
+                source=src_name,
+                published_raw=pub,
+                url=link or None,
+                image_url=image_url,
+                country_code=cc,
+                sentiment_override=None,
+                provider=prov,
+            )
+            if n:
+                _apply_region_hints(n, hints)
+                out.append(n)
+        logger.info("news_rss ok url=%s items=%s", url[:80], len(out))
+    except Exception as e:
+        logger.debug("news_rss failed url=%s err=%s", url[:80], e)
+    return out
+
+
+async def _fetch_all_rss_articles() -> list[dict]:
+    cap = max(5, min(settings.news_rss_max_items_per_feed, 120))
+    tasks = [
+        _fetch_rss_feed_url(u, [h], cap)
+        for u, h in _RSS_FEED_ROWS
+        if (u or "").strip()
+    ]
+    chunks = await asyncio.gather(*tasks, return_exceptions=True)
+    blocks: list[list[dict]] = []
+    for res in chunks:
+        if isinstance(res, Exception):
+            continue
+        if isinstance(res, list) and res:
+            blocks.append(res)
+    merged = _merge_dedupe(blocks)
+    return merged
+
+
 async def _fetch_rthk_rss(max_items: Optional[int] = None) -> list[dict]:
     if not settings.rthk_rss_enabled or not (settings.rthk_rss_url or "").strip():
         return []
     out: list[dict] = []
     try:
+        logger.info("news_api fetch rthk_rss GET %s", settings.rthk_rss_url.strip()[:80])
         async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 settings.rthk_rss_url.strip(),
@@ -770,7 +1205,9 @@ async def _fetch_rthk_rss(max_items: Optional[int] = None) -> list[dict]:
                 regs = list(dict.fromkeys((n.get("regions") or []) + ["hong_kong"]))
                 n["regions"] = regs
                 out.append(n)
-    except Exception:
+        logger.info("news_api rthk_rss ok items=%s", len(out))
+    except Exception as e:
+        logger.debug("news_api rthk_rss failed: %s", e)
         return []
     return out
 
@@ -812,15 +1249,21 @@ def _load_mock() -> list[dict]:
 
 
 def _merge_dedupe(chunks: list[list[dict]]) -> list[dict]:
-    seen: set[str] = set()
-    merged: list[dict] = []
+    by_key: dict[str, dict] = {}
     for chunk in chunks:
         for item in chunk:
             key = _norm_title_key(item.get("title", ""))
-            if not key or key in seen:
+            if not key:
                 continue
-            seen.add(key)
-            merged.append(item)
+            if key not in by_key:
+                by_key[key] = item
+                continue
+            existing = by_key[key]
+            r0 = list(existing.get("regions") or [])
+            r1 = list(item.get("regions") or [])
+            existing["regions"] = list(dict.fromkeys(r0 + r1))
+            if not existing.get("breaking") and item.get("breaking"):
+                existing["breaking"] = True
 
     def sort_key(x: dict) -> float:
         dt = _parse_publish(str(x.get("published_at") or ""))
@@ -830,6 +1273,7 @@ def _merge_dedupe(chunks: list[list[dict]]) -> list[dict]:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.timestamp()
 
+    merged = list(by_key.values())
     merged.sort(key=sort_key, reverse=True)
     return merged
 
@@ -913,13 +1357,28 @@ async def _gnews_sequential_searches(queries: list[str], per_q: int) -> list[dic
     return out
 
 
+async def _fallback_sequential_searches(queries: list[str], per_q: int) -> list[dict]:
+    out: list[dict] = []
+    for q in queries:
+        if settings.worldnews_api_key:
+            out.extend(await _worldnews_text(q, per_q))
+        if settings.news_api_key or settings.news_api_key2:
+            q2 = q.split(" OR ")[0].strip() if " OR " in q else q
+            out.extend(await newsdata_search(q2, size=per_q))
+        await asyncio.sleep(0.35)
+    return out
+
+
 async def _fetch_supplement_bundle(region: str, need: int) -> list[dict]:
     batch = _supplement_batch_size(need)
     per_q = min(10, max(5, batch))
     out: list[dict] = []
     queries = GNEWS_SUPPLEMENT_QUERIES.get(region, [])
-    if settings.gnews_api_key and queries:
-        out.extend(await _gnews_sequential_searches(queries, per_q))
+    if queries:
+        if settings.gnews_api_key and _quota_allows("gnews"):
+            out.extend(await _gnews_sequential_searches(queries, per_q))
+        elif settings.worldnews_api_key or settings.news_api_key or settings.news_api_key2:
+            out.extend(await _fallback_sequential_searches(queries, per_q))
 
     tasks: list = []
     if region == "hong_kong":
@@ -978,23 +1437,6 @@ async def _fetch_supplement_bundle(region: str, need: int) -> list[dict]:
 
 
 async def _ensure_min_articles_per_region(merged: list[dict]) -> list[dict]:
-    target = settings.news_min_per_region
-    rounds = max(1, settings.news_supplement_max_rounds)
-    for _ in range(rounds):
-        counts = {r: _count_in_region(merged, r) for r in REGION_KEYS}
-        short = [r for r in REGION_KEYS if counts[r] < target]
-        if not short:
-            break
-        before_len = len(merged)
-        for r in short:
-            need = target - _count_in_region(merged, r)
-            if need <= 0:
-                continue
-            patch = await _fetch_supplement_bundle(r, need)
-            if patch:
-                merged = _merge_dedupe([merged, patch])
-        if len(merged) == before_len:
-            break
     return merged
 
 
@@ -1002,21 +1444,7 @@ async def fetch_news_articles() -> list[dict]:
     global _articles_cache, _cache_time
 
     async with _fetch_lock:
-        g, w, n, r = await asyncio.gather(
-            _fetch_gnews(),
-            _fetch_worldnews(),
-            _fetch_newsdata(),
-            _fetch_rthk_rss(),
-            return_exceptions=True,
-        )
-        blocks: list[list[dict]] = []
-        for res in (g, w, n, r):
-            if isinstance(res, Exception):
-                continue
-            if isinstance(res, list) and res:
-                blocks.append(res)
-
-        merged = _merge_dedupe(blocks)
+        merged = await _fetch_all_rss_articles()
         if not merged:
             merged = _load_mock()
         else:
@@ -1034,12 +1462,7 @@ def get_cached_articles() -> list[dict]:
 async def refresh_breaking_news() -> None:
     global _breaking_cache, _breaking_cache_time
     async with _breaking_lock:
-        cached = _read_supabase_cache("breaking", settings.breaking_refresh_seconds)
-        if cached is not None:
-            _breaking_cache = cached
-            _breaking_cache_time = datetime.now(timezone.utc)
-            return
-        g = await _fetch_gnews()
+        g = await _fetch_all_rss_articles()
         if not g:
             return
         breaking = [a for a in g if a.get("breaking")]
@@ -1047,54 +1470,44 @@ async def refresh_breaking_news() -> None:
             breaking = g[:5]
         _breaking_cache = breaking
         _breaking_cache_time = datetime.now(timezone.utc)
-        _write_supabase_cache("breaking", breaking)
 
 
 async def refresh_general_news() -> None:
     global _articles_cache, _cache_time
     async with _fetch_lock:
-        cached = _read_supabase_cache("general", settings.general_news_refresh_seconds)
-        if cached is not None:
-            _articles_cache = cached
-            _cache_time = datetime.now(timezone.utc)
-            return
-        g, w, n, r = await asyncio.gather(
-            _fetch_gnews(),
-            _fetch_worldnews(),
-            _fetch_newsdata(),
-            _fetch_rthk_rss(),
-            return_exceptions=True,
-        )
-        blocks: list[list[dict]] = []
-        for res in (g, w, n, r):
-            if isinstance(res, Exception):
-                continue
-            if isinstance(res, list) and res:
-                blocks.append(res)
-        merged = _merge_dedupe(blocks)
+        merged = await _fetch_all_rss_articles()
         if not merged:
             merged = _load_mock()
         else:
             merged = await _ensure_min_articles_per_region(merged)
         _articles_cache = merged
         _cache_time = datetime.now(timezone.utc)
-        _write_supabase_cache("general", merged)
+
+
+async def force_refresh_general_news() -> None:
+    global _articles_cache, _cache_time
+    async with _fetch_lock:
+        merged = await _fetch_all_rss_articles()
+        if not merged:
+            merged = _load_mock()
+        else:
+            merged = await _ensure_min_articles_per_region(merged)
+        _articles_cache = merged
+        _cache_time = datetime.now(timezone.utc)
 
 
 async def ensure_news_cache() -> None:
     global _cache_time
     now = datetime.now(timezone.utc)
     if _articles_cache and _cache_time is not None:
-        age = (now - _cache_time).total_seconds()
-        if age < settings.news_refresh_seconds:
-            return
-    sb = _read_supabase_cache("general", settings.general_news_refresh_seconds)
-    if sb is not None:
-        _articles_cache.clear()
-        _articles_cache.extend(sb)
-        _cache_time = datetime.now(timezone.utc)
         return
-    await fetch_news_articles()
+    if settings.news_fetch_external_on_request:
+        await fetch_news_articles()
+        return
+    merged = _load_mock()
+    _articles_cache.clear()
+    _articles_cache.extend(merged)
+    _cache_time = now
 
 
 def get_news_feed(
@@ -1113,8 +1526,21 @@ def get_news_feed(
             continue
         filtered.append(a)
 
+    def _pub_ts(x: dict) -> float:
+        dt = _parse_publish(str(x.get("published_at") or ""))
+        if not dt:
+            return 0.0
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+
+    rgn = (region or "all").lower().strip()
+
     if breaking_only:
-        pool = [x for x in filtered if x.get("breaking")]
+        if rgn == "finance":
+            pool = sorted(filtered, key=_pub_ts, reverse=True)
+        else:
+            pool = sorted([x for x in filtered if x.get("breaking")], key=_pub_ts, reverse=True)
         total = len(pool)
         page = pool[offset : offset + limit]
         return {
@@ -1125,15 +1551,26 @@ def get_news_feed(
             "has_more": offset + limit < total,
         }
 
-    breaking_sorted = sorted(
-        [x for x in filtered if x.get("breaking")],
-        key=lambda x: _parse_publish(str(x.get("published_at") or "")) or datetime.min.replace(
-            tzinfo=timezone.utc
-        ),
-        reverse=True,
-    )[:8]
+    if rgn == "finance":
+        breaking_sorted = sorted(filtered, key=_pub_ts, reverse=True)[:8]
+    else:
+        breaking_sorted = sorted(
+            [
+                x
+                for x in filtered
+                if x.get("breaking") and x.get("provider") != "rss_wscn"
+            ],
+            key=lambda x: _parse_publish(str(x.get("published_at") or "")) or datetime.min.replace(
+                tzinfo=timezone.utc
+            ),
+            reverse=True,
+        )[:8]
     bt = {_norm_title_key(x.get("title", "")) for x in breaking_sorted}
-    feed_pool = [x for x in filtered if _norm_title_key(x.get("title", "")) not in bt]
+    feed_pool = sorted(
+        [x for x in filtered if _norm_title_key(x.get("title", "")) not in bt],
+        key=_pub_ts,
+        reverse=True,
+    )
     total = len(feed_pool)
     page = feed_pool[offset : offset + limit]
     return {

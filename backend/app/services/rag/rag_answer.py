@@ -125,6 +125,7 @@ def build_prompt(
     markets: list[dict[str, Any]] | None = None,
     stocks: list[dict[str, Any]] | None = None,
     goods: list[dict[str, Any]] | None = None,
+    extra_instructions: str | None = None,
 ) -> str:
     blocks: list[str] = []
     for idx, h in enumerate(hits, start=1):
@@ -152,11 +153,16 @@ def build_prompt(
     goods_section = _fmt_goods(goods) if goods else ""
     q = (question or "").strip()
 
+    extra = (extra_instructions or "").strip()
+    extra_block = f"\n\nAdditional instructions from the user (follow if compatible):\n{extra}\n" if extra else ""
+
     return (
-        "你是一個金融與市場分析助理。你擁有以下即時資料：Context（向量資料庫）、Recent News（新聞）、"
-        "Polymarket（預測市場）、Hot Stocks（股票報價）、Commodities（商品價格）。"
-        "請根據這些資料回答問題；若資料不足，請結合你自身的知識來回答。"
-        "請用與使用者提問相同的語言回答。\n\n"
+        "You are a finance and markets analyst. You have: Context (vector store), Recent News, "
+        "Polymarket prediction markets, Hot Stocks, and Commodities."
+        "Answer from these sources; if data is insufficient, say so clearly and do not invent sources."
+        "If you use news, list the URLs you relied on at the end of the answer."
+        "Reply in English."
+        f"{extra_block}\n\n"
         f"Question:\n{q}\n\n"
         f"Context:\n{context}"
         f"{news_section}"
@@ -182,9 +188,27 @@ class RagAnswerService:
         q_emb = await self.embedder.embed_text(question)
         return self.store.search(q_emb, top_k=top_k, source_filter=source_filter)
 
-    async def answer(self, question: str, top_k: int = 8, source_filter: str | None = None, news: list[dict[str, Any]] | None = None, markets: list[dict[str, Any]] | None = None, stocks: list[dict[str, Any]] | None = None, goods: list[dict[str, Any]] | None = None):
+    async def answer(
+        self,
+        question: str,
+        top_k: int = 8,
+        source_filter: str | None = None,
+        news: list[dict[str, Any]] | None = None,
+        markets: list[dict[str, Any]] | None = None,
+        stocks: list[dict[str, Any]] | None = None,
+        goods: list[dict[str, Any]] | None = None,
+        extra_instructions: str | None = None,
+    ):
         hits = await self.retrieve(question, top_k=top_k, source_filter=source_filter)
-        prompt = build_prompt(question, hits, news=news, markets=markets, stocks=stocks, goods=goods)
+        prompt = build_prompt(
+            question,
+            hits,
+            news=news,
+            markets=markets,
+            stocks=stocks,
+            goods=goods,
+            extra_instructions=extra_instructions,
+        )
         text = await self.chat.generate(prompt)
         return {"answer": text, "hits": hits}
 

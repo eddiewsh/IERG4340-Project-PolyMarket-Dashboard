@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     polymarket_base_url: str = "https://gamma-api.polymarket.com"
     news_api_key: str = ""
+    news_api_key2: str = ""
     gnews_api_key: str = ""
     worldnews_api_key: str = ""
     news_api_base_url: str = "https://newsapi.org/v2"
@@ -28,6 +29,7 @@ class Settings(BaseSettings):
     rthk_rss_enabled: bool = True
     rthk_rss_url: str = "https://rthk9.rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
     rthk_rss_max_items: int = 60
+    news_rss_max_items_per_feed: int = 90
 
     news_min_per_region: int = 30
     news_supplement_fetch_size: int = 35
@@ -46,9 +48,16 @@ class Settings(BaseSettings):
     massive_proxy_socks5_port: int = 65533
 
     polymarket_refresh_seconds: int = 300
+    polymarket_markets_max_events: int = 500
+    polymarket_markets_max_markets: int = 800
+    polymarket_monitor_max_active_events: int = 500
+    polymarket_monitor_max_closed_events: int = 200
+    polymarket_monitor_max_markets: int = 1000
     news_refresh_seconds: int = 900
     breaking_refresh_seconds: int = 900
     general_news_refresh_seconds: int = 1800
+    news_scheduler_enabled: bool = False
+    news_fetch_external_on_request: bool = False
     gnews_daily_limit: int = 100
     worldnews_daily_limit: int = 500
     newsdata_daily_limit: int = 200

@@ -2,17 +2,17 @@
 @plugin "@tailwindcss/typography";
 
 @theme {
-  --color-bg-primary: #0a0a0f;
-  --color-bg-card: rgba(15, 15, 25, 0.75);
-  --color-bg-glass: rgba(20, 20, 40, 0.55);
-  --color-border-glass: rgba(80, 200, 255, 0.12);
-  --color-accent-cyan: #00d4ff;
-  --color-accent-teal: #00ffc8;
-  --color-accent-purple: #a855f7;
-  --color-accent-rose: #f43f5e;
-  --color-accent-amber: #f59e0b;
-  --color-text-primary: #e2e8f0;
-  --color-text-secondary: #94a3b8;
+  --color-bg-primary: #f8fafc;
+  --color-bg-card: rgba(255, 255, 255, 0.92);
+  --color-bg-glass: rgba(255, 255, 255, 0.78);
+  --color-border-glass: rgba(15, 23, 42, 0.1);
+  --color-accent-cyan: #0284c7;
+  --color-accent-teal: #0d9488;
+  --color-accent-purple: #7c3aed;
+  --color-accent-rose: #e11d48;
+  --color-accent-amber: #d97706;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
   --color-text-muted: #64748b;
 }
 
@@ -34,15 +34,15 @@ html, body, #root {
 }
 
 .glass-strong {
-  background: rgba(10, 10, 25, 0.82);
+  background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(32px) saturate(180%);
   -webkit-backdrop-filter: blur(32px) saturate(180%);
-  border: 1px solid rgba(80, 200, 255, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.1);
 }
 
 @keyframes breaking-pulse {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(244, 63, 94, 0.28); }
-  50% { box-shadow: inset 0 0 0 1px rgba(244, 63, 94, 0.55); }
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.22); }
+  50% { box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.45); }
 }
 
 .animate-breaking-pulse {
@@ -65,8 +65,8 @@ html, body, #root {
 
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(80, 200, 255, 0.2); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(80, 200, 255, 0.4); }
+::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.15); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.28); }
 
 .line-clamp-2 {
   display: -webkit-box;
@@ -76,3 +76,6 @@ html, body, #root {
 }
 
 .rsm-geography:focus { outline: none; }
+
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

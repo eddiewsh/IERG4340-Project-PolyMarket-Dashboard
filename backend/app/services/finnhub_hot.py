@@ -40,7 +40,7 @@ async def _quote(symbol: str, *, client: httpx.AsyncClient) -> Optional[dict[str
         return None
 
 
-async def build_hot_large_value_stocks(*, min_market_cap_musd: float = 10_000, limit: int = 20) -> list[dict[str, Any]]:
+async def build_hot_large_value_stocks(*, min_market_cap_musd: float = 10_000, limit: int = 28) -> list[dict[str, Any]]:
     expires_at = _CACHE.get("expires_at")
     if isinstance(expires_at, datetime) and expires_at > _now():
         cached = _CACHE.get("value")
@@ -73,6 +73,37 @@ async def build_hot_large_value_stocks(*, min_market_cap_musd: float = 10_000, l
         "ASML",
         "NVO",
         "TM",
+        "AMD",
+        "INTC",
+        "CSCO",
+        "ADBE",
+        "NFLX",
+        "DIS",
+        "CRM",
+        "BAC",
+        "GS",
+        "MS",
+        "QCOM",
+        "IBM",
+        "AXP",
+        "CAT",
+        "HON",
+        "NEE",
+        "TMO",
+        "ABT",
+        "PM",
+        "RTX",
+        "LOW",
+        "SBUX",
+        "GILD",
+        "ISRG",
+        "BKNG",
+        "ADI",
+        "AMAT",
+        "LRCX",
+        "MU",
+        "PANW",
+        "SHOP",
     ]
 
     async with httpx.AsyncClient() as client:

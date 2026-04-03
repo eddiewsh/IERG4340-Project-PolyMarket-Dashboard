@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import Globe, { type GlobeInstance } from 'globe.gl'
 import type { HotPointNode, ArcEdge } from '../types'
+import { categoryColor } from '../constants/polymarketCategoryColors'
 
 interface Props {
   nodes: HotPointNode[]
@@ -8,20 +9,8 @@ interface Props {
   onNodeClick?: (node: HotPointNode) => void
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  politics: '#f43f5e',
-  geopolitics: '#ef4444',
-  economics: '#f59e0b',
-  crypto: '#a855f7',
-  tech: '#00d4ff',
-  stocks: '#22c55e',
-  health: '#10b981',
-  climate: '#06b6d4',
-  sports: '#ec4899',
-}
-
 function getColor(category: string): string {
-  return CATEGORY_COLORS[category] || '#00d4ff'
+  return categoryColor(category, '#00d4ff')
 }
 
 function scoreToSize(score: number, maxScore: number): number {

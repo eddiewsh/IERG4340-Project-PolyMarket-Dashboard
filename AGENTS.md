@@ -1,5 +1,25 @@
 ## 專案設計方案與系統架構（給 Cursor 快速理解）
 
+### 0) 近期專案進度（2026-04 更新）
+- **RAG**
+  - 新增 `POST /api/rag/summarize`：針對 `polymarket / news / stock / other` 產生摘要，並支援 Grounding（搜尋來源連結必填）。
+  - `GeminiChat` 與 `GeminiEmbedder` 分工：摘要/聊天走 chat，ingest 走 embedding（維持原本 RAG ingest/ask/chat 流程）。
+- **News**
+  - `config` 增加控制開關：`news_scheduler_enabled`、`news_fetch_external_on_request`，以及 `news_api_key2`、`news_rss_max_items_per_feed`。
+  - `main.py`：news scheduler 改為可選；啟動時改用背景 `force_refresh_general_news()`。
+  - `news/client.py`：加強 quota 控制（每日只警告一次）、region 推斷（補中日韓美等關鍵字）、以及整體抓取/合併流程調整（檔案變動較大）。
+- **Polymarket / Monitor**
+  - `GET /api/monitor/markets`：每次 request 觸發背景 refresh（服務端防重入），避免 request 內同步抓外部 API。
+  - HotPoint schema 擴充：`description`、`resolution_source`、`rules`（前端可顯示事件細節）。
+- **Stocks / Goods / Others**
+  - 交易所 sector 拉取上限提升：`max_tickers` 提升到 120。
+  - 熱門股票清單擴充：`build_hot_large_value_stocks` limit 提升到 28 並補更多 symbols。
+  - `goods/others` 資料來源改走 `yahoo_quotes`（新增 `backend/app/services/yahoo_quotes.py`），並擴充商品/外匯/能源/金屬 symbols；同時移除 API key 缺失時直接 500 的限制（改為服務內部自行處理可用資料）。
+- **Frontend**
+  - 引入 `SelectedItem`（Polymarket/News/Stock/Crypto/Other）作為跨面板選取狀態；底部左側增加「選取項目詳情」區塊。
+  - `AiChatPanel` 支援對 `selectedItem` 一鍵呼叫 `ragSummarize()` 產生摘要（後端 `/api/rag/summarize`）。
+  - 右側資訊面板寬度可拖拉調整；多個面板（News/Stocks/Others/Crypto/Market list）加上選取回呼以同步 `SelectedItem`。
+
 ### 1) 專案目標
 - 以 **Polymarket 事件/市場資料** 為核心，結合 **新聞聚合** 與 **熱度計分**，在前端地圖上呈現「熱點事件」並提供列表/詳情。
 - 提供 **AI RAG 問答/聊天**：可將外部內容切塊向量化寫入 Supabase，查詢時同時結合「向量命中內容 + 最新新聞 + Polymarket + 熱門股票/商品」生成回答。
@@ -67,7 +87,7 @@
 ### 4) 核心資料模型（概念層）
 - **HotPoint（地圖節點）**
   - 來源：monitor markets（Polymarket events/markets）
-  - 欄位（概念）：`market_id,title,lat,lng,hot_score,volume_24h,probability,probability_change_24h,news_mention_count,liquidity,category,image_url,outcomes,outcome_prices,updated_at`
+  - 欄位（概念）：`market_id,title,lat,lng,hot_score,volume_24h,probability,probability_change_24h,news_mention_count,liquidity,category,image_url,description,resolution_source,rules,outcomes,outcome_prices,updated_at`
 - **News Article（聚合後統一格式）**
   - `title,description,source,keywords,published_at,url,image_url,sentiment,breaking,regions,provider`
 - **RAG Document Chunk**
@@ -102,6 +122,7 @@
 - `POST /api/rag/ingest`：`source,title,content,url,source_id,metadata`
 - `POST /api/rag/ask`：`question,top_k,source`
 - `POST /api/rag/chat`：`question,conversation_id?,top_k,source`
+- `POST /api/rag/summarize`：`kind(polymarket|news|stock|other), title?, symbol?, market_id?, description?, probability?, volume_24h?, url?, news_source?`
 - `GET /api/rag/conversations`
 - `GET /api/rag/conversations/{conversation_id}/messages`
 - `WS /ws/hotpoints`：hotpoints 更新推播（後端已有 broadcast，前端是否接入視目前實作）

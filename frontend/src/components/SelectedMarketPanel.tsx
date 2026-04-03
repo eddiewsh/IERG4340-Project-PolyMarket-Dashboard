@@ -1,16 +1,7 @@
 import type { HotPointNode } from '../types'
+import { categoryColor } from '../constants/polymarketCategoryColors'
 
-const CATEGORY_COLORS: Record<string, string> = {
-  politics: '#f43f5e',
-  geopolitics: '#ef4444',
-  economics: '#f59e0b',
-  crypto: '#a855f7',
-  tech: '#00d4ff',
-  stocks: '#22c55e',
-  health: '#10b981',
-  climate: '#06b6d4',
-  sports: '#ec4899',
-}
+const OUTCOME_COLORS = ['#10b981', '#f43f5e', '#00d4ff', '#a855f7', '#f59e0b', '#22c55e', '#06b6d4', '#ec4899']
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M'
@@ -24,45 +15,105 @@ function probColor(change: number): string {
   return 'text-slate-400'
 }
 
+function BinaryDetail({ node }: { node: HotPointNode }) {
+  const outcomes = node.outcomes && node.outcomes.length === 2 ? node.outcomes : ['Yes', 'No']
+  const prices = node.outcome_prices && node.outcome_prices.length === 2 ? node.outcome_prices : null
+  const yesVal = prices ? prices[0] : node.probability
+  const noVal = prices ? prices[1] : 1 - node.probability
+  const yesPct = (yesVal * 100).toFixed(0)
+  const noPct = (noVal * 100).toFixed(0)
+
+  return (
+    <div className="mb-3">
+      <div className="flex items-end gap-3 mb-2">
+        <div className="flex-1">
+          <div className="text-[11px] text-emerald-600 font-semibold uppercase tracking-wider mb-0.5">{outcomes[0]}</div>
+          <div className="text-[28px] font-extrabold text-emerald-500 leading-none">
+            {yesPct}<span className="text-[14px] font-bold">%</span>
+          </div>
+        </div>
+        <div className="flex-1 text-right">
+          <div className="text-[11px] text-rose-500 font-semibold uppercase tracking-wider mb-0.5">{outcomes[1]}</div>
+          <div className="text-[28px] font-extrabold text-rose-400 leading-none">
+            {noPct}<span className="text-[14px] font-bold">%</span>
+          </div>
+        </div>
+      </div>
+      <div className="h-2.5 rounded-full overflow-hidden bg-slate-200 flex">
+        <div className="h-full rounded-l-full" style={{ width: `${yesPct}%`, background: 'linear-gradient(90deg, #10b981, #34d399)' }} />
+        <div className="h-full rounded-r-full" style={{ width: `${noPct}%`, background: 'linear-gradient(90deg, #fb7185, #f43f5e)' }} />
+      </div>
+    </div>
+  )
+}
+
+function MultiDetail({ node }: { node: HotPointNode }) {
+  const outcomes = node.outcomes ?? []
+  const prices = node.outcome_prices ?? []
+
+  const items = outcomes.map((label, i) => ({
+    label,
+    pct: prices[i] != null ? prices[i] * 100 : 0,
+    color: OUTCOME_COLORS[i % OUTCOME_COLORS.length],
+  }))
+  items.sort((a, b) => b.pct - a.pct)
+
+  const maxPct = Math.max(...items.map((v) => v.pct), 1)
+
+  return (
+    <div className="max-h-56 overflow-y-auto pr-1 mb-3 space-y-2">
+      {items.map((item, i) => (
+        <div key={`${item.label}-${i}`}>
+          <div className="flex items-center justify-between mb-0.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />
+              <span className="text-[12px] text-text-secondary truncate">{item.label}</span>
+            </div>
+            <span className="text-[13px] font-bold text-text-primary shrink-0 ml-2">
+              {item.pct.toFixed(0)}%
+            </span>
+          </div>
+          <div className="h-[6px] rounded-full bg-slate-200 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${(item.pct / maxPct) * 100}%`, background: item.color, opacity: 0.85 }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function SelectedMarketPanel({ node }: { node: HotPointNode | null }) {
   if (!node) {
     return (
       <div className="h-full flex items-center justify-center p-4">
-        <p className="text-[12px] text-text-muted text-center">點擊地圖上的光點以查看 Polymarket 事件</p>
+        <p className="text-[12px] text-text-muted text-center">Click a hotspot on the map to view Polymarket events</p>
       </div>
     )
   }
 
-  const color = CATEGORY_COLORS[node.category] || '#00d4ff'
+  const color = categoryColor(node.category, '#00d4ff')
   const change = node.probability_change_24h
   const changeStr = (change >= 0 ? '+' : '') + (change * 100).toFixed(1) + '%'
-  const outcomes = node.outcomes && node.outcomes.length ? node.outcomes : ['Yes', 'No']
-  const outcomePrices = node.outcome_prices && node.outcome_prices.length ? node.outcome_prices : null
-  const outcomePercents = outcomes.map((_, i) => {
-    if (outcomePrices && outcomePrices.length === outcomes.length) {
-      return (outcomePrices[i] * 100).toFixed(0)
-    }
-    if (outcomes.length === 2) {
-      return i === 0 ? (node.probability * 100).toFixed(0) : ((1 - node.probability) * 100).toFixed(0)
-    }
-    return i === 0 ? (node.probability * 100).toFixed(0) : '0'
-  })
+  const isBinary = !node.outcomes || node.outcomes.length <= 2
   const eventUrl = `https://polymarket.com/event/${encodeURIComponent(node.market_id)}`
 
   return (
     <div className="h-full overflow-y-auto p-3 min-h-0">
-      <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] p-3">
+      <div className="rounded-xl border border-slate-200 bg-white p-3">
         <div className="flex items-start gap-3 mb-3">
           {node.image_url ? (
             <img
               src={node.image_url}
               alt=""
-              className="w-12 h-12 rounded-lg object-cover border border-white/[0.06] shrink-0"
+              className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
               loading="lazy"
             />
           ) : (
             <div
-              className="w-12 h-12 rounded-lg border border-white/[0.06] shrink-0"
+              className="w-12 h-12 rounded-lg border border-slate-200 shrink-0"
               style={{ boxShadow: `0 0 10px ${color}22` }}
             />
           )}
@@ -72,18 +123,14 @@ export default function SelectedMarketPanel({ node }: { node: HotPointNode | nul
               <span className="text-[11px] font-semibold text-text-secondary uppercase">{node.category}</span>
             </div>
             <h3 className="text-[14px] text-text-primary leading-snug font-medium">{node.title}</h3>
+            {node.tag_slugs && node.tag_slugs.length > 0 ? (
+              <p className="text-[10px] text-text-muted mt-1 break-words">{node.tag_slugs.join(' · ')}</p>
+            ) : null}
           </div>
           <span className={`text-[12px] font-semibold shrink-0 ${probColor(change)}`}>{changeStr}</span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          {outcomes.slice(0, 4).map((label, i) => (
-            <div key={`${label}-${i}`} className="rounded-lg border border-white/[0.06] px-2 py-1.5">
-              <div className="text-[10px] text-text-muted uppercase mb-0.5">{label}</div>
-              <div className="text-[16px] font-bold text-text-primary">{outcomePercents[i]}%</div>
-            </div>
-          ))}
-        </div>
+        {isBinary ? <BinaryDetail node={node} /> : <MultiDetail node={node} />}
 
         <div className="text-[11px] text-text-muted space-y-1 mb-3">
           <div className="flex justify-between gap-2">

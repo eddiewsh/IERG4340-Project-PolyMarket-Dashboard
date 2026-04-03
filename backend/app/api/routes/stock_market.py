@@ -17,7 +17,7 @@ async def _build_us_stock_market() -> list[dict]:
         try:
             results.append(
                 await asyncio.wait_for(
-                    _get_exchange_sectors_massive(exchange_label, exchange_mic, max_tickers=80),
+                    _get_exchange_sectors_massive(exchange_label, exchange_mic, max_tickers=120),
                     timeout=10,
                 )
             )

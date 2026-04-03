@@ -78,7 +78,7 @@ export default function HotPointPanel({ node, onClose }: Props) {
 
 function StatBox({ label, value, sub }: { label: string; value: string; sub?: React.ReactNode }) {
   return (
-    <div className="bg-white/[0.03] rounded-lg px-3 py-2.5 border border-white/[0.04]">
+    <div className="bg-slate-50 rounded-lg px-3 py-2.5 border border-slate-200">
       <div className="text-[12px] text-text-muted uppercase tracking-wider mb-1">{label}</div>
       <div className="text-[18px] font-bold text-text-primary">{value}</div>
       {sub && <div className="text-[14px] mt-0.5">{sub}</div>}

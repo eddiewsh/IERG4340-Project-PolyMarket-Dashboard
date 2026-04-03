@@ -45,7 +45,7 @@ export default function MarketLegend({ data }: Props) {
         ))}
       </div>
 
-      <div className="border-t border-white/[0.06] pt-3 space-y-1.5 text-[13px] text-text-muted">
+      <div className="border-t border-slate-200 pt-3 space-y-1.5 text-[13px] text-text-muted">
         <div className="flex justify-between">
           <span>Active Markets</span>
           <span className="text-text-primary font-medium">{nodeCount}</span>
@@ -61,7 +61,7 @@ export default function MarketLegend({ data }: Props) {
       </div>
 
       {data && (
-        <div className="mt-3 pt-2 border-t border-white/[0.06] text-[12px] text-text-muted">
+        <div className="mt-3 pt-2 border-t border-slate-200 text-[12px] text-text-muted">
           Updated {new Date(data.generated_at).toLocaleTimeString()}
         </div>
       )}
