@@ -7,7 +7,7 @@ interface Props {
 
 export default function TopBar({ marketCount, onOpenSettings, earthBlank, onToggleEarthBlank }: Props) {
   return (
-    <div className="glass-strong rounded-full px-5 py-2 flex items-center gap-4 select-none">
+    <div className="rounded-full px-5 py-2 flex items-center gap-4 select-none bg-white border border-slate-200 shadow-sm">
       <div className="flex items-center gap-2">
         <div className="w-2.5 h-2.5 rounded-full bg-accent-cyan animate-pulse shadow-[0_0_8px_rgba(2,132,199,0.45)]" />
         <span className="text-[15px] font-bold tracking-wider text-text-primary">

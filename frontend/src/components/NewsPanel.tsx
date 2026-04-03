@@ -44,12 +44,6 @@ const REGIONS: { id: string; label: string }[] = [
   { id: 'other', label: 'Other' },
 ]
 
-const TIME_OPTS: { id: string; label: string }[] = [
-  { id: '1h', label: 'Last 1 Hour' },
-  { id: '6h', label: 'Last 6 Hours' },
-  { id: '24h', label: 'Last 24 Hours' },
-  { id: 'all', label: 'All' },
-]
 
 export function relativeTime(iso: string): string {
   const d = new Date(iso)
@@ -215,7 +209,7 @@ function FeedCard({ a, onSelectNews }: { a: NewsArticle; onSelectNews?: (a: News
 
 export default function NewsPanel({ onSelectNews }: { onSelectNews?: (a: NewsArticle) => void }) {
   const [region, setRegion] = useState('all')
-  const [timeWindow, setTimeWindow] = useState('24h')
+  const [timeWindow] = useState('24h')
   const [breakingOnly, setBreakingOnly] = useState(false)
   const [breaking, setBreaking] = useState<NewsArticle[]>([])
   const [feed, setFeed] = useState<NewsArticle[]>([])
@@ -330,22 +324,6 @@ export default function NewsPanel({ onSelectNews }: { onSelectNews?: (a: NewsArt
               }`}
             >
               {r.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2 mt-3">
-          {TIME_OPTS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTimeWindow(t.id)}
-              className={`text-[11px] px-2 py-1 rounded-md border ${
-                timeWindow === t.id
-                  ? 'border-accent-cyan/50 text-accent-cyan bg-accent-cyan/10'
-                  : 'border-slate-200 text-text-muted hover:border-slate-300'
-              }`}
-            >
-              {t.label}
             </button>
           ))}
         </div>

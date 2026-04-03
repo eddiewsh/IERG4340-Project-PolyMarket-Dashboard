@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
@@ -7,7 +9,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 class Settings(BaseSettings):
     app_name: str = "PolyMonitor"
     debug: bool = True
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    is_serverless: bool = bool(os.environ.get("VERCEL"))
+    cors_origins: list[str] = ["*"]
+    cron_secret: str = ""
 
     supabase_url: str = ""
     supabase_service_role_key: str = ""

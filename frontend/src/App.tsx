@@ -304,7 +304,7 @@ export default function App() {
                 )}
               </>
             )}
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30">
               <TopBar
                 marketCount={mapNodes.length}
                 onOpenSettings={() => setSettingsOpen(true)}
