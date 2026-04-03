@@ -20,7 +20,7 @@ async def _profile(symbol: str, *, client: httpx.AsyncClient) -> Optional[dict[s
     url = "https://finnhub.io/api/v1/stock/profile2"
     params = {"symbol": symbol, "token": settings.finnhub_api_key}
     try:
-        r = await client.get(url, params=params, timeout=20)
+        r = await client.get(url, params=params, timeout=5)
         r.raise_for_status()
         data = r.json()
         return data if isinstance(data, dict) else None
@@ -32,12 +32,19 @@ async def _quote(symbol: str, *, client: httpx.AsyncClient) -> Optional[dict[str
     url = "https://finnhub.io/api/v1/quote"
     params = {"symbol": symbol, "token": settings.finnhub_api_key}
     try:
-        r = await client.get(url, params=params, timeout=20)
+        r = await client.get(url, params=params, timeout=5)
         r.raise_for_status()
         data = r.json()
         return data if isinstance(data, dict) else None
     except Exception:
         return None
+
+
+_SYMBOL_NAMES: dict[str, str] = {
+    "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "AMZN": "Amazon",
+    "GOOGL": "Alphabet", "META": "Meta", "TSLA": "Tesla",
+    "AMD": "AMD", "NFLX": "Netflix", "JPM": "JPMorgan",
+}
 
 
 async def build_hot_large_value_stocks(*, min_market_cap_musd: float = 10_000, limit: int = 28) -> list[dict[str, Any]]:
@@ -46,88 +53,16 @@ async def build_hot_large_value_stocks(*, min_market_cap_musd: float = 10_000, l
         cached = _CACHE.get("value")
         return cached if isinstance(cached, list) else []
 
-    # Large-cap candidates (US mega caps). Adjust as needed.
-    symbols = [
-        "AAPL",
-        "MSFT",
-        "NVDA",
-        "AMZN",
-        "GOOGL",
-        "META",
-        "TSLA",
-        "BRK.B",
-        "JPM",
-        "V",
-        "MA",
-        "LLY",
-        "AVGO",
-        "XOM",
-        "UNH",
-        "COST",
-        "WMT",
-        "PG",
-        "HD",
-        "KO",
-        "PEP",
-        "ORCL",
-        "ASML",
-        "NVO",
-        "TM",
-        "AMD",
-        "INTC",
-        "CSCO",
-        "ADBE",
-        "NFLX",
-        "DIS",
-        "CRM",
-        "BAC",
-        "GS",
-        "MS",
-        "QCOM",
-        "IBM",
-        "AXP",
-        "CAT",
-        "HON",
-        "NEE",
-        "TMO",
-        "ABT",
-        "PM",
-        "RTX",
-        "LOW",
-        "SBUX",
-        "GILD",
-        "ISRG",
-        "BKNG",
-        "ADI",
-        "AMAT",
-        "LRCX",
-        "MU",
-        "PANW",
-        "SHOP",
-    ]
+    symbols = list(_SYMBOL_NAMES.keys())
 
     async with httpx.AsyncClient() as client:
         sem = asyncio.Semaphore(10)
 
         async def one(sym: str) -> Optional[dict[str, Any]]:
             async with sem:
-                prof = await _profile(sym, client=client)
-            if not prof:
-                return None
-            mc = prof.get("marketCapitalization")
-            try:
-                mc_f = float(mc) if mc is not None else None
-            except Exception:
-                mc_f = None
-            if mc_f is None or mc_f < min_market_cap_musd:
-                return None
-
-            async with sem:
                 q = await _quote(sym, client=client)
             if not q:
                 return None
-
-            # Finnhub quote: c=current, d=change, dp=percent change
             price = q.get("c")
             dp = q.get("dp")
             try:
@@ -138,13 +73,14 @@ async def build_hot_large_value_stocks(*, min_market_cap_musd: float = 10_000, l
                 dp_f = float(dp) if dp is not None else None
             except Exception:
                 dp_f = None
-
+            if price_f is None or price_f <= 0:
+                return None
             return {
                 "symbol": sym,
-                "name": prof.get("name") or "",
+                "name": _SYMBOL_NAMES.get(sym, ""),
                 "price": price_f,
                 "change_percentage": dp_f,
-                "market_cap": mc_f * 1_000_000,  # convert to USD-ish scale
+                "market_cap": None,
             }
 
         items = await asyncio.gather(*(one(s) for s in symbols))

@@ -41,7 +41,63 @@ def _json_default(o: object) -> str:
     return str(o)
 
 
+def _supabase_headers() -> dict[str, str]:
+    return {
+        "apikey": settings.supabase_service_role_key,
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+
+def _persist_monitor_markets_supabase(markets: list[dict]) -> None:
+    if not markets or not settings.supabase_url or not settings.supabase_service_role_key:
+        return
+    url = f"{settings.supabase_url.rstrip('/')}/rest/v1/monitor_markets_cache"
+    rows = []
+    for m in markets:
+        mid = str(m.get("market_id") or "")
+        if not mid:
+            continue
+        rows.append({
+            "id": mid,
+            "data": m,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+    if not rows:
+        return
+    try:
+        with httpx.Client(timeout=30) as client:
+            client.post(
+                url,
+                headers={**_supabase_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+                json=rows,
+            )
+    except Exception:
+        pass
+
+
+def _load_monitor_markets_supabase(limit: int) -> list[dict]:
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        return []
+    url = (
+        f"{settings.supabase_url.rstrip('/')}/rest/v1/monitor_markets_cache"
+        f"?select=data&order=updated_at.desc&limit={limit}"
+    )
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.get(url, headers=_supabase_headers())
+            if r.status_code >= 400:
+                return []
+            rows = r.json()
+            return [row["data"] for row in rows if isinstance(row.get("data"), dict)]
+    except Exception:
+        return []
+
+
 def _init_monitor_db() -> None:
+    if settings.is_serverless:
+        return
     conn = sqlite3.connect(_monitor_db_path)
     try:
         conn.execute(
@@ -62,6 +118,9 @@ _init_monitor_db()
 
 
 def _persist_monitor_markets_to_db(markets: list[dict]) -> None:
+    if settings.is_serverless:
+        _persist_monitor_markets_supabase(markets)
+        return
     if not markets:
         return
     conn = sqlite3.connect(_monitor_db_path)
@@ -89,6 +148,8 @@ def _persist_monitor_markets_to_db(markets: list[dict]) -> None:
 
 
 def _load_monitor_markets_from_db(limit: int) -> list[dict]:
+    if settings.is_serverless:
+        return _load_monitor_markets_supabase(limit)
     conn = sqlite3.connect(_monitor_db_path)
     try:
         rows = conn.execute(
