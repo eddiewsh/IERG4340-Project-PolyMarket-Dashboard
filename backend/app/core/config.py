@@ -54,9 +54,9 @@ class Settings(BaseSettings):
     polymarket_refresh_seconds: int = 300
     polymarket_markets_max_events: int = 500
     polymarket_markets_max_markets: int = 800
-    polymarket_monitor_max_active_events: int = 500
-    polymarket_monitor_max_closed_events: int = 200
-    polymarket_monitor_max_markets: int = 1000
+    polymarket_monitor_max_active_events: int = 100 if bool(os.environ.get("VERCEL")) else 500
+    polymarket_monitor_max_closed_events: int = 50 if bool(os.environ.get("VERCEL")) else 200
+    polymarket_monitor_max_markets: int = 200 if bool(os.environ.get("VERCEL")) else 1000
     news_refresh_seconds: int = 900
     breaking_refresh_seconds: int = 900
     general_news_refresh_seconds: int = 1800
