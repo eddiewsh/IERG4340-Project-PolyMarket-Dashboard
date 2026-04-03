@@ -12,7 +12,7 @@ import type {
   StockMarketResponse,
 } from '../types'
 
-const BASE = ''
+const BASE = import.meta.env.VITE_API_BASE_URL || ''
 
 export async function fetchMonitorMarkets(): Promise<HotPointsData> {
   const res = await fetch(`${BASE}/api/monitor/markets`)

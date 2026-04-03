@@ -27,7 +27,7 @@ export default function ChatHistorySidebar({ activeId, onSelect, onNewChat, refr
   const [tab, setTab] = useState<'chats' | 'maps'>('chats')
 
   useEffect(() => {
-    fetch('/api/rag/conversations')
+    fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/rag/conversations`)
       .then((r) => r.json())
       .then((data: Conversation[]) => setConversations(data))
       .catch(() => {})
