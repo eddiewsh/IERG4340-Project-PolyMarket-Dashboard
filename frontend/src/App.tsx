@@ -1,6 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect } from 'react'
 import FlatMap from './components/FlatMap.tsx'
-import Map2D from './components/Map2D'
 import MarketLegend from './components/MarketLegend'
 import CryptoMarketPanel from './components/CryptoMarketPanel.tsx'
 import NewsPanel, { relativeTime } from './components/NewsPanel'
@@ -33,7 +32,6 @@ export default function App() {
   const [selectedClusterKey, setSelectedClusterKey] = useState<string | null>(null)
   const [selectedEventIndex, setSelectedEventIndex] = useState(0)
   const [rightTab, setRightTab] = useState<'news' | 'market' | 'crypto' | 'stocks' | 'others'>('news')
-  const [mapMode, setMapMode] = useState<'3d' | '2d'>('3d')
   const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [historyRefresh, setHistoryRefresh] = useState(0)
@@ -278,19 +276,11 @@ export default function App() {
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
           <div className="relative flex-1 min-h-0">
             {monitorData && !earthBlank && (
-              mapMode === '3d' ? (
                 <FlatMap
                   clusters={clusters}
                   selectedKey={selectedClusterKey}
                   onClusterClick={selectCluster}
                 />
-              ) : (
-                <Map2D
-                  clusters={clusters}
-                  selectedKey={selectedClusterKey}
-                  onClusterClick={selectCluster}
-                />
-              )
             )}
             {earthBlank && (
               <>
@@ -369,14 +359,6 @@ export default function App() {
                 </div>
               )}
             </DraggablePanel>
-            )}
-            {!earthBlank && (
-            <button
-              onClick={() => setMapMode((m) => (m === '3d' ? '2d' : '3d'))}
-              className="absolute top-3 right-4 z-20 px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-[12px] text-text-secondary hover:bg-slate-200 hover:text-text-primary transition-colors"
-            >
-              {mapMode === '3d' ? '2D' : '3D'}
-            </button>
             )}
           </div>
 
