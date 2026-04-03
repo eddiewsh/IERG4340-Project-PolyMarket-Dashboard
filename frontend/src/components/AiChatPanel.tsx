@@ -79,7 +79,7 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
       setMessages([])
       return
     }
-    fetch(`/api/rag/conversations/${conversationId}/messages`)
+    fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/rag/conversations/${conversationId}/messages`)
       .then((r) => r.json())
       .then((data: Message[]) => setMessages(data))
       .catch(() => {})
@@ -97,7 +97,7 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
     setLoading(true)
     try {
       const extra = (localStorage.getItem(STORAGE_CHAT_EXTRA) ?? '').trim().slice(0, 2000)
-      const res = await fetch('/api/rag/chat', {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/rag/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
