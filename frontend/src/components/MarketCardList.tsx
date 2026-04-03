@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import type { HotPointNode } from '../types'
 import {
@@ -28,7 +28,6 @@ function probColor(change: number): string {
 
 const OUTCOME_COLORS = ['#10b981', '#f43f5e', '#00d4ff', '#a855f7', '#f59e0b', '#22c55e', '#06b6d4', '#ec4899']
 
-const CARD_MAX_OUTCOMES = 6
 const MULTI_MAX_VISIBLE = 5
 
 export default function MarketCardList({ nodes, selectedId, onSelect }: Props) {
