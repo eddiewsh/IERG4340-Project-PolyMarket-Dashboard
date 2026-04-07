@@ -1445,12 +1445,22 @@ async def fetch_news_articles() -> list[dict]:
 
     async with _fetch_lock:
         merged = await _fetch_all_rss_articles()
-        if not merged:
-            merged = _load_mock()
-        else:
+        if merged:
             merged = await _ensure_min_articles_per_region(merged)
+            _articles_cache = merged
+            _cache_time = datetime.now(timezone.utc)
+            return _articles_cache
 
-        _articles_cache = merged
+        fallback = _load_mock()
+        if fallback:
+            _articles_cache = fallback
+            _cache_time = datetime.now(timezone.utc)
+            return _articles_cache
+
+        if _articles_cache:
+            return _articles_cache
+
+        _articles_cache = []
         _cache_time = datetime.now(timezone.utc)
         return _articles_cache
 
@@ -1476,11 +1486,22 @@ async def refresh_general_news() -> None:
     global _articles_cache, _cache_time
     async with _fetch_lock:
         merged = await _fetch_all_rss_articles()
-        if not merged:
-            merged = _load_mock()
-        else:
+        if merged:
             merged = await _ensure_min_articles_per_region(merged)
-        _articles_cache = merged
+            _articles_cache = merged
+            _cache_time = datetime.now(timezone.utc)
+            return
+
+        fallback = _load_mock()
+        if fallback:
+            _articles_cache = fallback
+            _cache_time = datetime.now(timezone.utc)
+            return
+
+        if _articles_cache:
+            return
+
+        _articles_cache = []
         _cache_time = datetime.now(timezone.utc)
 
 
@@ -1488,11 +1509,22 @@ async def force_refresh_general_news() -> None:
     global _articles_cache, _cache_time
     async with _fetch_lock:
         merged = await _fetch_all_rss_articles()
-        if not merged:
-            merged = _load_mock()
-        else:
+        if merged:
             merged = await _ensure_min_articles_per_region(merged)
-        _articles_cache = merged
+            _articles_cache = merged
+            _cache_time = datetime.now(timezone.utc)
+            return
+
+        fallback = _load_mock()
+        if fallback:
+            _articles_cache = fallback
+            _cache_time = datetime.now(timezone.utc)
+            return
+
+        if _articles_cache:
+            return
+
+        _articles_cache = []
         _cache_time = datetime.now(timezone.utc)
 
 
