@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { ragSummarize } from '../api/client'
+import { appendRagMessage, createRagConversation, ragSummarize } from '../api/client'
 import { STORAGE_CHAT_EXTRA } from '../constants/storage'
 import type { SelectedItem } from '../types'
 
@@ -26,10 +26,17 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
   const bottomRef = useRef<HTMLDivElement>(null)
   const activeConversationRef = useRef<string | null>(conversationId)
   const sendTokenRef = useRef(0)
+  const messagesRef = useRef<Message[]>(messages)
+  const lastHistoryLoadedRef = useRef<string | null>(null)
+  const summarizeNewConvRef = useRef<string | null>(null)
 
   useEffect(() => {
     activeConversationRef.current = conversationId
   }, [conversationId])
+
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
   const handleSummarize = useCallback(async () => {
     if (!selectedItem || !summarizeEnabled || summarizeLoading) return
@@ -42,8 +49,13 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
             ? `[Crypto] ${selectedItem.title} (${selectedItem.symbol})`
             : `[${selectedItem.kind === 'stock' ? 'Stock' : 'Other'}] ${selectedItem.title}`
     setSummarizeLoading(true)
-    setMessages((prev) => [...prev, { role: 'user', content: `Summarize: ${label}` }])
+    const userContent = `Summarize: ${label}`
     try {
+      const created = await createRagConversation({ title: label.slice(0, 120) })
+      const convId = created.conversation_id
+      summarizeNewConvRef.current = convId
+      onConversationCreated(convId)
+      setMessages([{ role: 'user', content: userContent }])
       const payload =
         selectedItem.kind === 'polymarket'
           ? {
@@ -73,22 +85,40 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
                 : { kind: 'other' as const, title: selectedItem.title, symbol: selectedItem.symbol }
       const data = await ragSummarize(payload)
       setMessages((prev) => [...prev, { role: 'assistant', content: data.answer }])
+      await appendRagMessage(convId, { role: 'user', content: userContent })
+      await appendRagMessage(convId, { role: 'assistant', content: data.answer })
     } catch (e: any) {
       setMessages((prev) => [...prev, { role: 'assistant', content: e?.message || 'Summarize failed.' }])
     } finally {
+      summarizeNewConvRef.current = null
       setSummarizeLoading(false)
     }
-  }, [selectedItem, summarizeEnabled, summarizeLoading])
+  }, [onConversationCreated, selectedItem, summarizeEnabled, summarizeLoading])
 
   useEffect(() => {
     if (!conversationId) {
       setMessages([])
+      lastHistoryLoadedRef.current = null
       return
     }
     const ctrl = new AbortController()
     fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/rag/conversations/${conversationId}/messages`, { signal: ctrl.signal })
       .then((r) => r.json())
-      .then((data: Message[]) => setMessages(data))
+      .then((data: Message[]) => {
+        if (activeConversationRef.current !== conversationId) return
+        if (
+          summarizeNewConvRef.current === conversationId &&
+          Array.isArray(data) &&
+          data.length === 0
+        ) {
+          return
+        }
+        const cur = messagesRef.current
+        const sameConv = lastHistoryLoadedRef.current === conversationId
+        if (sameConv && cur.length > 0 && Array.isArray(data) && data.length < cur.length) return
+        lastHistoryLoadedRef.current = conversationId
+        setMessages(Array.isArray(data) ? data : [])
+      })
       .catch(() => {})
     return () => ctrl.abort()
   }, [conversationId])
@@ -112,7 +142,7 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: q,
-          conversation_id: conversationId,
+          conversation_id: convAtSend,
           top_k: 8,
           ...(extra ? { extra_instructions: extra } : {}),
         }),
@@ -145,7 +175,10 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
       <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
         {messages.length === 0 && !loading && !summarizeLoading && (
           <div className="flex items-center justify-center h-full">
-            <p className="text-text-muted text-[13px]">Ask anything about the data…</p>
+            <div className="text-center text-text-muted text-[13px] space-y-1">
+              <p>Click &quot;+ New Chat&quot; on the left to start a conversation.</p>
+              {summarizeEnabled && <p>Or select an item first, then click &quot;AI Summarize&quot; below.</p>}
+            </div>
           </div>
         )}
         {messages.map((m, i) => (
