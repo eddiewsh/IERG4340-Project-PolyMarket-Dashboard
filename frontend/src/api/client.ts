@@ -151,3 +151,15 @@ export async function createRagConversation(payload: { title?: string } = {}): P
   }
   return res.json()
 }
+
+export async function appendRagMessage(conversationId: string, payload: { role: 'user' | 'assistant'; content: string }): Promise<void> {
+  const res = await fetch(`${BASE}/api/rag/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `HTTP ${res.status}`)
+  }
+}

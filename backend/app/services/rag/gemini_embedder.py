@@ -7,6 +7,9 @@ import httpx
 
 from app.core.config import settings
 
+_GEMINI_MAX_CONCURRENCY = 2
+_GEMINI_SEMAPHORE = asyncio.Semaphore(_GEMINI_MAX_CONCURRENCY)
+
 
 def _read_dotenv_value(path: str, key: str) -> str:
     try:
@@ -58,18 +61,21 @@ class GeminiEmbedder:
             "content": {"parts": [{"text": text}]},
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.embedding_model}:embedContent"
-            r = await client.post(url, params=params, json=payload)
-            if r.status_code == 429:
-                await asyncio.sleep(2)
-                r = await client.post(url, params=params, json=payload)
-            if r.status_code == 429:
-                raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
-            if r.status_code >= 400:
-                key_len = len(self.api_key or "")
-                raise RuntimeError(f"Gemini embedContent failed ({r.status_code}) [key_len={key_len}]: {r.text}")
-            data = r.json()
+        async with _GEMINI_SEMAPHORE:
+            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.embedding_model}:embedContent"
+                r: httpx.Response | None = None
+                for attempt in range(5):
+                    r = await client.post(url, params=params, json=payload)
+                    if r.status_code != 429:
+                        break
+                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+                if r is None or r.status_code == 429:
+                    raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
+                if r.status_code >= 400:
+                    key_len = len(self.api_key or "")
+                    raise RuntimeError(f"Gemini embedContent failed ({r.status_code}) [key_len={key_len}]: {r.text}")
+                data = r.json()
             values = (((data or {}).get("embedding") or {}).get("values")) or []
             if not isinstance(values, list) or not values:
                 raise RuntimeError("Gemini embedContent returned empty embedding")
@@ -102,19 +108,19 @@ class GeminiChat:
         if use_grounding:
             payload["tools"] = [{"google_search": {}}]
 
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            for model in dict.fromkeys([self.chat_model, "gemini-2.5-flash"]):
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-                r = await client.post(url, params=params, json=payload)
-                if r.status_code == 429:
-                    await asyncio.sleep(2)
+        async with _GEMINI_SEMAPHORE:
+            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.chat_model}:generateContent"
+                r: httpx.Response | None = None
+                for attempt in range(5):
                     r = await client.post(url, params=params, json=payload)
-                if r.status_code != 429:
-                    break
-            if r.status_code == 429:
-                raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
-            r.raise_for_status()
-            data = r.json()
+                    if r.status_code != 429:
+                        break
+                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+                if r is None or r.status_code == 429:
+                    raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
+                r.raise_for_status()
+                data = r.json()
 
         candidates = (data or {}).get("candidates") or []
         if not candidates:
@@ -140,19 +146,19 @@ class GeminiChat:
             "tools": [{"google_search": {}}],
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            for model in dict.fromkeys([self.chat_model, "gemini-2.5-flash"]):
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-                r = await client.post(url, params=params, json=payload)
-                if r.status_code == 429:
-                    await asyncio.sleep(2)
+        async with _GEMINI_SEMAPHORE:
+            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.chat_model}:generateContent"
+                r: httpx.Response | None = None
+                for attempt in range(5):
                     r = await client.post(url, params=params, json=payload)
-                if r.status_code != 429:
-                    break
-            if r.status_code == 429:
-                raise RuntimeError("Gemini API rate limit exceeded.")
-            r.raise_for_status()
-            data = r.json()
+                    if r.status_code != 429:
+                        break
+                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+                if r is None or r.status_code == 429:
+                    raise RuntimeError("Gemini API rate limit exceeded.")
+                r.raise_for_status()
+                data = r.json()
 
         candidates = (data or {}).get("candidates") or []
         if not candidates:

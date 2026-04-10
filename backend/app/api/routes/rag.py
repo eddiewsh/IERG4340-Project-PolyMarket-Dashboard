@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timezone
 import re
 from typing import Any, Optional
+import time
+import hashlib
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -24,6 +26,34 @@ from app.services.rag.supabase_store import RagChunk, SupabaseRagStore
 
 
 router = APIRouter()
+
+_SUMMARIZE_CACHE_TTL_S = 300
+_summarize_cache: dict[str, tuple[float, RagSummarizeResponse]] = {}
+
+def _summarize_cache_key(kind: str, title: str, symbol: str, market_id: str, description: str | None, url: str | None, news_source: str | None) -> str:
+    raw = "|".join([
+        kind.strip().lower(),
+        (title or "").strip(),
+        (symbol or "").strip(),
+        (market_id or "").strip(),
+        (description or "").strip(),
+        (url or "").strip(),
+        (news_source or "").strip(),
+    ])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def _summarize_cache_get(key: str) -> RagSummarizeResponse | None:
+    hit = _summarize_cache.get(key)
+    if not hit:
+        return None
+    ts, val = hit
+    if (time.time() - ts) > _SUMMARIZE_CACHE_TTL_S:
+        _summarize_cache.pop(key, None)
+        return None
+    return val
+
+def _summarize_cache_put(key: str, val: RagSummarizeResponse) -> None:
+    _summarize_cache[key] = (time.time(), val)
 
 def _build_event_summary_prompt(subject: str, market_context: list[dict[str, Any]]) -> str:
     market_blocks: list[str] = []
@@ -136,6 +166,11 @@ class ChatMessage(BaseModel):
     created_at: Optional[str] = None
 
 
+class AppendMessageRequest(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., min_length=1, max_length=12000)
+
+
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1)
     conversation_id: Optional[str] = None
@@ -234,13 +269,17 @@ async def rag_chat(req: ChatRequest):
     base = _sb_url()
     headers = _sb_headers()
 
+    existing_title: str | None = None
     with httpx.Client(timeout=10) as c:
         r = c.get(
             f"{base}/rest/v1/rag_conversations",
             headers=headers,
-            params={"conversation_id": f"eq.{conv_id}", "select": "conversation_id"},
+            params={"conversation_id": f"eq.{conv_id}", "select": "conversation_id,title"},
         )
-        exists = bool(r.status_code == 200 and r.json())
+        data = r.json() if r.status_code == 200 else []
+        exists = bool(isinstance(data, list) and data)
+        if exists and isinstance(data[0], dict):
+            existing_title = str(data[0].get("title") or "").strip() or None
 
     if not exists:
         title = req.question[:80]
@@ -250,6 +289,17 @@ async def rag_chat(req: ChatRequest):
                 headers={**headers, "Prefer": "return=minimal"},
                 json={"conversation_id": conv_id, "title": title, "updated_at": now},
             )
+
+    if exists and existing_title:
+        t = existing_title.strip().lower()
+        if t in {"new chat", "new chat...", "new chat…"}:
+            with httpx.Client(timeout=10) as c:
+                c.patch(
+                    f"{base}/rest/v1/rag_conversations",
+                    headers={**headers, "Prefer": "return=minimal"},
+                    params={"conversation_id": f"eq.{conv_id}"},
+                    json={"title": req.question[:80]},
+                )
 
     with httpx.Client(timeout=10) as c:
         c.post(
@@ -314,6 +364,10 @@ async def rag_summarize(req: RagSummarizeRequest):
     title = (req.title or "").strip()
     symbol = (req.symbol or "").strip()
     market_id = (req.market_id or "").strip()
+    cache_key = _summarize_cache_key(kind, title, symbol, market_id, req.description, req.url, req.news_source)
+    cached = _summarize_cache_get(cache_key)
+    if cached:
+        return cached
 
     if kind == "news":
         if not title:
@@ -325,7 +379,14 @@ async def rag_summarize(req: RagSummarizeRequest):
             req.url,
         )
         try:
-            answer = await GeminiChat().generate(question, use_grounding=True)
+            try:
+                answer = await GeminiChat().generate(question, use_grounding=True)
+            except Exception as e:
+                err = str(e)
+                if "rate limit" in err.lower() or "429" in err:
+                    answer = await GeminiChat().generate(question, use_grounding=False)
+                else:
+                    raise
         except Exception as e:
             err = str(e)
             logger.error("rag_summarize error: %s", err, exc_info=True)
@@ -334,7 +395,9 @@ async def rag_summarize(req: RagSummarizeRequest):
             if "rate limit" in err.lower() or "429" in err:
                 raise HTTPException(status_code=429, detail="API rate limit exceeded, please try again shortly.")
             raise HTTPException(status_code=502, detail=err)
-        return RagSummarizeResponse(answer=answer, hits=[], live_news=[])
+        resp = RagSummarizeResponse(answer=answer, hits=[], live_news=[])
+        _summarize_cache_put(cache_key, resp)
+        return resp
 
     if kind == "polymarket":
         subject = title or market_id
@@ -399,7 +462,14 @@ async def rag_summarize(req: RagSummarizeRequest):
     question = _build_event_summary_prompt(subject, target_markets)
 
     try:
-        answer = await GeminiChat().generate(question, use_grounding=True)
+        try:
+            answer = await GeminiChat().generate(question, use_grounding=True)
+        except Exception as e:
+            err = str(e)
+            if "rate limit" in err.lower() or "429" in err:
+                answer = await GeminiChat().generate(question, use_grounding=False)
+            else:
+                raise
         result = {"answer": answer, "hits": []}
     except Exception as e:
         err = str(e)
@@ -409,7 +479,9 @@ async def rag_summarize(req: RagSummarizeRequest):
         if "rate limit" in err.lower() or "429" in err:
             raise HTTPException(status_code=429, detail="API rate limit exceeded, please try again shortly.")
         raise HTTPException(status_code=502, detail=err)
-    return RagSummarizeResponse(answer=result["answer"], hits=result["hits"], live_news=live_news[:20])
+    resp = RagSummarizeResponse(answer=result["answer"], hits=result["hits"], live_news=live_news[:20])
+    _summarize_cache_put(cache_key, resp)
+    return resp
 
 
 @router.post("/rag/conversations", response_model=CreateConversationResponse)
@@ -454,6 +526,40 @@ async def rag_conversation_messages(conversation_id: str):
         )
         data = r.json() if r.status_code == 200 else []
     return [ChatMessage(**d) for d in data] if isinstance(data, list) else []
+
+
+@router.post("/rag/conversations/{conversation_id}/messages")
+async def rag_append_conversation_message(conversation_id: str, req: AppendMessageRequest):
+    cid = (conversation_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=422, detail="Missing conversation id.")
+    base = _sb_url()
+    headers = _sb_headers()
+    now = datetime.now(timezone.utc).isoformat()
+
+    with httpx.Client(timeout=10) as c:
+        r0 = c.get(
+            f"{base}/rest/v1/rag_conversations",
+            headers=headers,
+            params={"conversation_id": f"eq.{cid}", "select": "conversation_id"},
+        )
+        if not (r0.status_code == 200 and isinstance(r0.json(), list) and r0.json()):
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+
+        r1 = c.post(
+            f"{base}/rest/v1/rag_messages",
+            headers={**headers, "Prefer": "return=minimal"},
+            json={"conversation_id": cid, "role": req.role, "content": req.content, "created_at": now},
+        )
+        if r1.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Failed to save message: {r1.text}")
+        c.patch(
+            f"{base}/rest/v1/rag_conversations",
+            headers={**headers, "Prefer": "return=minimal"},
+            params={"conversation_id": f"eq.{cid}"},
+            json={"updated_at": now},
+        )
+    return {"ok": True, "conversation_id": cid, "created_at": now}
 
 
 @router.delete("/rag/conversations/{conversation_id}")
