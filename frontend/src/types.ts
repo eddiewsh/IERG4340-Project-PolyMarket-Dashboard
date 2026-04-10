@@ -31,6 +31,9 @@ export interface HotPointsData {
   nodes: HotPointNode[]
   edges: ArcEdge[]
   top_n: number
+  total?: number | null
+  offset?: number | null
+  limit?: number | null
 }
 
 export interface NewsArticle {
@@ -49,6 +52,7 @@ export interface NewsArticle {
 
 export interface NewsFeedResponse {
   generated_at: string
+  updated_at: string
   breaking: NewsArticle[]
   articles: NewsArticle[]
   total: number

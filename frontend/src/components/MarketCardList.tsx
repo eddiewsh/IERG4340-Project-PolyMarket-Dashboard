@@ -12,6 +12,9 @@ interface Props {
   nodes: HotPointNode[]
   selectedId: string | null
   onSelect: (node: HotPointNode) => void
+  hasMore?: boolean
+  loadingMore?: boolean
+  onLoadMore?: () => void
 }
 
 function formatNumber(n: number): string {
@@ -30,8 +33,9 @@ const OUTCOME_COLORS = ['#10b981', '#f43f5e', '#00d4ff', '#a855f7', '#f59e0b', '
 
 const MULTI_MAX_VISIBLE = 5
 
-export default function MarketCardList({ nodes, selectedId, onSelect }: Props) {
+export default function MarketCardList({ nodes, selectedId, onSelect, hasMore = false, loadingMore = false, onLoadMore }: Props) {
   const [filter, setFilter] = useState<string | null>(null)
+  const loadingRef = useRef(false)
 
   const groups = KNOWN_GROUP_ORDER
 
@@ -83,7 +87,19 @@ export default function MarketCardList({ nodes, selectedId, onSelect }: Props) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div
+        className="flex-1 overflow-y-auto px-4 pb-4"
+        onScroll={(e) => {
+          const el = e.currentTarget
+          const nearEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 220
+          if (!nearEnd) return
+          if (!hasMore || !onLoadMore || loadingRef.current) return
+          loadingRef.current = true
+          Promise.resolve(onLoadMore()).finally(() => {
+            loadingRef.current = false
+          })
+        }}
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {filtered.map((node) => (
             <MarketCard
@@ -94,6 +110,11 @@ export default function MarketCardList({ nodes, selectedId, onSelect }: Props) {
             />
           ))}
         </div>
+        {loadingMore && (
+          <div className="py-4 flex items-center justify-center">
+            <div className="w-5 h-5 border-2 border-accent-cyan border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
       </div>
     </div>
   )

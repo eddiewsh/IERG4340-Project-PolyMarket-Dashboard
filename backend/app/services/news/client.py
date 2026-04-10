@@ -1577,6 +1577,7 @@ def get_news_feed(
         page = pool[offset : offset + limit]
         return {
             "generated_at": _to_iso(datetime.now(timezone.utc)),
+            "updated_at": _to_iso(_cache_time or datetime.now(timezone.utc)),
             "breaking": [],
             "articles": page,
             "total": total,
@@ -1607,6 +1608,7 @@ def get_news_feed(
     page = feed_pool[offset : offset + limit]
     return {
         "generated_at": _to_iso(datetime.now(timezone.utc)),
+        "updated_at": _to_iso(_cache_time or datetime.now(timezone.utc)),
         "breaking": breaking_sorted,
         "articles": page,
         "total": total,

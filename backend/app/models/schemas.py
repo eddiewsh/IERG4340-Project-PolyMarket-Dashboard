@@ -36,6 +36,9 @@ class HotPointsResponse(BaseModel):
     nodes: list[HotPointNode]
     edges: list[ArcEdge]
     top_n: int
+    total: Optional[int] = None
+    offset: Optional[int] = None
+    limit: Optional[int] = None
 
 
 class MarketDetail(BaseModel):

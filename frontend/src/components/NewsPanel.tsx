@@ -213,6 +213,7 @@ export default function NewsPanel({ onSelectNews }: { onSelectNews?: (a: NewsArt
   const [breakingOnly, setBreakingOnly] = useState(false)
   const [breaking, setBreaking] = useState<NewsArticle[]>([])
   const [feed, setFeed] = useState<NewsArticle[]>([])
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -229,6 +230,7 @@ export default function NewsPanel({ onSelectNews }: { onSelectNews?: (a: NewsArt
     if (cached) {
       setBreaking(cached.breaking)
       setFeed(cached.articles)
+      setUpdatedAt(cached.updated_at || null)
       offsetRef.current = cached.articles.length
       setHasMore(cached.has_more)
       setLoading(false)
@@ -245,6 +247,7 @@ export default function NewsPanel({ onSelectNews }: { onSelectNews?: (a: NewsArt
       })
       setBreaking(r.breaking)
       setFeed(r.articles)
+      setUpdatedAt(r.updated_at || null)
       offsetRef.current = r.articles.length
       setHasMore(r.has_more)
       writeLsCache(key, r)
@@ -298,7 +301,14 @@ export default function NewsPanel({ onSelectNews }: { onSelectNews?: (a: NewsArt
     <div className="flex flex-col h-full min-h-0">
       <div className="shrink-0 z-10 px-4 pt-3 pb-3 border-b border-slate-200 bg-white/90 backdrop-blur-md">
         <div className="flex items-center justify-between gap-2 mb-3">
-          <h2 className="text-[15px] font-bold tracking-wider text-accent-cyan uppercase">Live News</h2>
+          <div className="flex flex-col">
+            <h2 className="text-[15px] font-bold tracking-wider text-accent-cyan uppercase leading-none">Live News</h2>
+            {updatedAt && (
+              <div className="mt-1 text-[11px] text-text-muted">
+                Updated: {Number.isNaN(new Date(updatedAt).getTime()) ? updatedAt : new Date(updatedAt).toLocaleString()}
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setBreakingOnly((v) => !v)}

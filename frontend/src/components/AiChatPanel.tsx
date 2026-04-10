@@ -24,6 +24,12 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
   const [loading, setLoading] = useState(false)
   const [summarizeLoading, setSummarizeLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const activeConversationRef = useRef<string | null>(conversationId)
+  const sendTokenRef = useRef(0)
+
+  useEffect(() => {
+    activeConversationRef.current = conversationId
+  }, [conversationId])
 
   const handleSummarize = useCallback(async () => {
     if (!selectedItem || !summarizeEnabled || summarizeLoading) return
@@ -79,10 +85,12 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
       setMessages([])
       return
     }
-    fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/rag/conversations/${conversationId}/messages`)
+    const ctrl = new AbortController()
+    fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/rag/conversations/${conversationId}/messages`, { signal: ctrl.signal })
       .then((r) => r.json())
       .then((data: Message[]) => setMessages(data))
       .catch(() => {})
+    return () => ctrl.abort()
   }, [conversationId])
 
   useEffect(() => {
@@ -92,6 +100,8 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
   async function send() {
     const q = input.trim()
     if (!q || loading) return
+    const convAtSend = conversationId
+    const token = ++sendTokenRef.current
     setInput('')
     setMessages((prev) => [...prev, { role: 'user', content: q }])
     setLoading(true)
@@ -112,14 +122,20 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
         throw new Error(err?.detail || res.statusText)
       }
       const data = await res.json()
+      if (sendTokenRef.current !== token) return
+      if (activeConversationRef.current !== convAtSend) return
       setMessages((prev) => [...prev, { role: 'assistant', content: data.answer }])
       if (!conversationId && data.conversation_id) {
         onConversationCreated(data.conversation_id)
       }
     } catch (e: any) {
+      if (sendTokenRef.current !== token) return
+      if (activeConversationRef.current !== convAtSend) return
       const msg = e?.message?.includes('rate limit') ? 'Rate limited. Please try again shortly.' : `Error: ${e?.message || 'failed to get response.'}`
       setMessages((prev) => [...prev, { role: 'assistant', content: msg }])
     } finally {
+      if (sendTokenRef.current !== token) return
+      if (activeConversationRef.current !== convAtSend) return
       setLoading(false)
     }
   }
@@ -202,10 +218,18 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
               type="button"
               onClick={() => {
                 const text = input.trim()
-                if (!text) return
-                onGenerateImpactMap(text)
+                if (text) {
+                  onGenerateImpactMap(text)
+                  return
+                }
+                for (let i = messages.length - 1; i >= 0; i--) {
+                  if (messages[i]?.role === 'user' && messages[i]?.content?.trim()) {
+                    onGenerateImpactMap(messages[i].content.trim())
+                    return
+                  }
+                }
               }}
-              disabled={!input.trim() || !!impactLoading}
+              disabled={!!impactLoading}
               className="px-3 py-2 rounded-lg bg-accent-amber/15 text-accent-amber text-[13px] font-medium hover:bg-accent-amber/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title="Generate impact map from chat input"
             >
