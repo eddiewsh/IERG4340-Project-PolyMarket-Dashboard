@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from app.services.news.client import ensure_news_cache, get_news_feed
+from app.services.news.client import ensure_news_cache, fetch_news_articles, get_news_feed
 
 router = APIRouter()
 
@@ -16,6 +16,9 @@ async def get_news(
 ):
     await ensure_news_cache()
     data = get_news_feed(region, time_window, breaking_only, offset, limit)
+    if not breaking_only and not (data.get("breaking") or data.get("articles")):
+        await fetch_news_articles()
+        data = get_news_feed(region, time_window, breaking_only, offset, limit)
     max_age = 60 if breaking_only else 120
     return JSONResponse(
         content=data,

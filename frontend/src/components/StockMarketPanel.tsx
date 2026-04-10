@@ -1,60 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { fetchHotStocks, fetchStockMarket } from '../api/client'
-import type { HotStock, HotStocksResponse, StockExchange, StockMarketResponse, StockSector, StockTicker } from '../types'
-
-function Pill({
-  active,
-  onClick,
-  children,
-  dotColor,
-}: {
-  active: boolean
-  onClick: () => void
-  children: ReactNode
-  dotColor?: string
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`text-[12px] px-2 py-0.5 rounded-full transition-colors flex items-center gap-1 capitalize ${
-        active
-          ? 'bg-white/10 text-text-primary'
-          : 'text-text-muted hover:text-text-secondary'
-      }`}
-    >
-      {dotColor && <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />}
-      {children}
-    </button>
-  )
-}
-
-function sectorDot(sector: string): string {
-  // Deterministic color for visual grouping.
-  let h = 0
-  for (let i = 0; i < sector.length; i++) h = (h * 31 + sector.charCodeAt(i)) >>> 0
-  const hue = h % 360
-  return `hsl(${hue} 90% 60%)`
-}
-
-function StockRow({ t, onSelect }: { t: StockTicker; onSelect?: (symbol: string, name: string) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect?.(t.symbol, t.name)}
-      className="w-full text-left flex items-center justify-between gap-3 py-2 border-t border-slate-200 hover:bg-slate-100 rounded-md px-1"
-    >
-      <div className="min-w-0 flex items-center gap-2">
-        <div className="w-7 h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center text-[13px] font-bold text-text-primary shrink-0">
-          {t.symbol.slice(0, 4)}
-        </div>
-        <div className="min-w-0">
-          <div className="text-[14px] font-semibold text-text-primary truncate">{t.symbol}</div>
-          <div className="text-[12px] text-text-muted truncate">{t.name}</div>
-        </div>
-      </div>
-    </button>
-  )
-}
+import { useEffect, useState } from 'react'
+import { fetchHotStocks } from '../api/client'
+import type { HotStock, HotStocksResponse } from '../types'
 
 function HotRow({ s, onSelect }: { s: HotStock; onSelect?: (symbol: string, name: string) => void }) {
   const pct = s.change_percentage
@@ -81,50 +27,33 @@ function HotRow({ s, onSelect }: { s: HotStock; onSelect?: (symbol: string, name
 }
 
 export default function StockMarketPanel({ onSelect }: { onSelect?: (symbol: string, name: string) => void }) {
-  const [data, setData] = useState<StockMarketResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [hot, setHot] = useState<HotStocksResponse | null>(null)
-  const [hotError, setHotError] = useState<string | null>(null)
-  const [selectedExchange, setSelectedExchange] = useState<string>('')
-  const [selectedSector, setSelectedSector] = useState<string>('')
+  const [hotByMarket, setHotByMarket] = useState<Record<string, HotStocksResponse | null>>({
+    us: null,
+    london: null,
+    japan: null,
+    hong_kong: null,
+  })
+  const [hotError, setHotError] = useState<Record<string, string | null>>({
+    us: null,
+    london: null,
+    japan: null,
+    hong_kong: null,
+  })
 
   useEffect(() => {
-    fetchStockMarket()
-      .then((r) => {
-        setData(r)
-        const firstEx = r.exchanges?.[0]?.exchange ?? ''
-        setSelectedExchange(firstEx)
-        const firstSector = r.exchanges?.[0]?.sectors?.[0]?.sector ?? ''
-        setSelectedSector(firstSector)
-      })
-      .catch((e) => setError((e as Error).message))
-
-    fetchHotStocks()
-      .then((r) => setHot(r))
-      .catch((e) => setHotError((e as Error).message))
+    const markets = ['us', 'london', 'japan', 'hong_kong'] as const
+    markets.forEach((m) => {
+      fetchHotStocks({ market: m })
+        .then((r) => {
+          setHotByMarket((prev) => ({ ...prev, [m]: r }))
+          setHotError((prev) => ({ ...prev, [m]: null }))
+        })
+        .catch((e) => {
+          setHotError((prev) => ({ ...prev, [m]: (e as Error).message }))
+          setHotByMarket((prev) => ({ ...prev, [m]: { generated_at: new Date().toISOString(), stocks: [] } }))
+        })
+    })
   }, [])
-
-  const exchange: StockExchange | null = useMemo(() => {
-    if (!data) return null
-    return data.exchanges.find((x) => x.exchange === selectedExchange) ?? null
-  }, [data, selectedExchange])
-
-  const sectors: StockSector[] = exchange?.sectors ?? []
-
-  useEffect(() => {
-    if (!sectors.length) {
-      setSelectedSector('')
-      return
-    }
-    if (!sectors.some((s) => s.sector === selectedSector)) {
-      setSelectedSector(sectors[0].sector)
-    }
-  }, [sectors, selectedSector])
-
-  const tickers = useMemo(() => {
-    if (!exchange || !selectedSector) return []
-    return exchange.sectors.find((s) => s.sector === selectedSector)?.tickers ?? []
-  }, [exchange, selectedSector])
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -133,66 +62,55 @@ export default function StockMarketPanel({ onSelect }: { onSelect?: (symbol: str
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 space-y-3">
-        <div className="rounded-xl p-3 bg-slate-50 border border-slate-200">
-          <div className="text-[14px] font-bold tracking-wider text-accent-cyan uppercase mb-2">Hot (Large Cap)</div>
-          {hotError && <div className="text-[13px] text-rose-400 mb-2">{hotError}</div>}
-          {!hot ? (
-            <div className="flex items-center justify-center py-4">
-              <div className="w-6 h-6 border-2 border-accent-cyan border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : hot.stocks.length ? (
-            <div>
-              {hot.stocks.map((s) => (
-                <HotRow key={s.symbol} s={s} onSelect={onSelect} />
-              ))}
-            </div>
-          ) : (
-            <div className="text-[13px] text-text-muted py-4 text-center">No data</div>
-          )}
-        </div>
-
-        {error && <div className="text-[13px] text-rose-400 mb-2">{error}</div>}
-        {!data ? (
-          <div className="py-6">
-            <div className="w-6 h-6 border-2 border-accent-cyan border-t-transparent rounded-full animate-spin mx-auto" />
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex gap-1.5 flex-wrap">
-              {data.exchanges.map((ex) => (
-                <Pill key={ex.exchange} active={selectedExchange === ex.exchange} onClick={() => setSelectedExchange(ex.exchange)}>
-                  {ex.exchange}
-                </Pill>
-              ))}
-            </div>
-
-            <div className="flex gap-1.5 flex-wrap">
-              {sectors.map((s) => (
-                <Pill
-                  key={s.sector}
-                  active={selectedSector === s.sector}
-                  onClick={() => setSelectedSector(s.sector)}
-                  dotColor={sectorDot(s.sector)}
-                >
-                  {s.sector}
-                </Pill>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {data && tickers.length ? (
-          <div>
-            {tickers.map((t) => (
-              <StockRow key={t.symbol} t={t} onSelect={onSelect} />
-            ))}
-          </div>
-        ) : (
-          data && (
-            <div className="text-[13px] text-text-muted py-10 text-center">No data</div>
-          )
-        )}
+        <HotSection title="US" error={hotError.us} data={hotByMarket.us} onSelect={onSelect} />
+        <HotSection title="London" error={hotError.london} data={hotByMarket.london} onSelect={onSelect} />
+        <HotSection title="Japan" error={hotError.japan} data={hotByMarket.japan} onSelect={onSelect} />
+        <HotSection title="Hong Kong" error={hotError.hong_kong} data={hotByMarket.hong_kong} onSelect={onSelect} />
       </div>
+    </div>
+  )
+}
+
+function formatUpdatedAt(iso: string | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function HotSection({
+  title,
+  error,
+  data,
+  onSelect,
+}: {
+  title: string
+  error: string | null
+  data: HotStocksResponse | null
+  onSelect?: (symbol: string, name: string) => void
+}) {
+  const updated = data?.generated_at ? formatUpdatedAt(data.generated_at) : ''
+  return (
+    <div className="rounded-xl p-3 bg-slate-50 border border-slate-200">
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <div className="text-[14px] font-bold tracking-wider text-accent-cyan uppercase">Hot (Large Cap) · {title}</div>
+        {updated && <div className="text-[11px] text-text-muted whitespace-nowrap">Updated: {updated}</div>}
+      </div>
+      {error && <div className="text-[13px] text-rose-400 mb-2">{error}</div>}
+      {!data ? (
+        <div className="flex items-center justify-center py-4">
+          <div className="w-6 h-6 border-2 border-accent-cyan border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : data.stocks.length ? (
+        <div>
+          {data.stocks.map((s) => (
+            <HotRow key={s.symbol} s={s} onSelect={onSelect} />
+          ))}
+        </div>
+      ) : (
+        <div className="text-[13px] text-text-muted py-4 text-center">No data</div>
+      )}
     </div>
   )
 }

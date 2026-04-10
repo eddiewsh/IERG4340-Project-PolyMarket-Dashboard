@@ -14,8 +14,12 @@ import type {
 
 const BASE = import.meta.env.VITE_API_BASE_URL || ''
 
-export async function fetchMonitorMarkets(): Promise<HotPointsData> {
-  const res = await fetch(`${BASE}/api/monitor/markets`)
+export async function fetchMonitorMarkets(params: { offset?: number; limit?: number } = {}): Promise<HotPointsData> {
+  const sp = new URLSearchParams()
+  if (params.offset != null) sp.set('offset', String(params.offset))
+  if (params.limit != null) sp.set('limit', String(params.limit))
+  const q = sp.toString()
+  const res = await fetch(`${BASE}/api/monitor/markets${q ? `?${q}` : ''}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -51,8 +55,11 @@ export async function fetchOthers(): Promise<OthersResponse> {
   return res.json()
 }
 
-export async function fetchHotStocks(): Promise<HotStocksResponse> {
-  const res = await fetch(`${BASE}/api/stocks/hot`)
+export async function fetchHotStocks(params: { market?: string } = {}): Promise<HotStocksResponse> {
+  const sp = new URLSearchParams()
+  if (params.market) sp.set('market', params.market)
+  const q = sp.toString()
+  const res = await fetch(`${BASE}/api/stocks/hot${q ? `?${q}` : ''}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -130,4 +137,17 @@ export async function deleteRagConversation(conversationId: string): Promise<voi
     const err = await res.json().catch(() => null)
     throw new Error(err?.detail || `HTTP ${res.status}`)
   }
+}
+
+export async function createRagConversation(payload: { title?: string } = {}): Promise<{ conversation_id: string; title: string; updated_at: string }> {
+  const res = await fetch(`${BASE}/api/rag/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
 }

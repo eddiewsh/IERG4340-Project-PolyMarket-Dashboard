@@ -16,7 +16,7 @@ import DraggablePanel from './components/DraggablePanel'
 import MarketCardList from './components/MarketCardList.tsx'
 import { useMonitorMarkets } from './hooks/useMonitorMarkets'
 import type { HotPointNode, ImpactGraph, SelectedItem } from './types'
-import { generateImpactMap, saveImpactMap, loadImpactMap } from './api/client'
+import { generateImpactMap, saveImpactMap, loadImpactMap, fetchMonitorMarkets, createRagConversation } from './api/client'
 
 type Cluster = {
   key: string
@@ -50,6 +50,58 @@ export default function App() {
   const [rightWidthPx, setRightWidthPx] = useState(1000)
   const rightDragging = useRef(false)
   const topContainerRef = useRef<HTMLDivElement>(null)
+
+  const [marketListNodes, setMarketListNodes] = useState<HotPointNode[]>([])
+  const [marketListOffset, setMarketListOffset] = useState(0)
+  const [marketListHasMore, setMarketListHasMore] = useState(true)
+  const [marketListLoadingMore, setMarketListLoadingMore] = useState(false)
+
+  const loadMoreMarketList = useCallback(async () => {
+    if (marketListLoadingMore || !marketListHasMore) return
+    setMarketListLoadingMore(true)
+    try {
+      const limit = 50
+      const res = await fetchMonitorMarkets({ offset: marketListOffset, limit })
+      const total = typeof res.total === 'number' ? res.total : null
+      const next = (res.nodes ?? []) as HotPointNode[]
+      setMarketListNodes((prev) => {
+        const seen = new Set(prev.map((x) => x.market_id))
+        const merged = prev.slice()
+        for (const n of next) {
+          if (!seen.has(n.market_id)) merged.push(n)
+        }
+        return merged
+      })
+      const newOffset = marketListOffset + next.length
+      setMarketListOffset(newOffset)
+      if (total != null) setMarketListHasMore(newOffset < total)
+      else setMarketListHasMore(next.length === limit)
+    } finally {
+      setMarketListLoadingMore(false)
+    }
+  }, [marketListHasMore, marketListLoadingMore, marketListOffset])
+
+  useEffect(() => {
+    if (rightTab !== 'market') return
+    setMarketListNodes([])
+    setMarketListOffset(0)
+    setMarketListHasMore(true)
+    setMarketListLoadingMore(false)
+    void (async () => {
+      setMarketListLoadingMore(true)
+      try {
+        const limit = 50
+        const res = await fetchMonitorMarkets({ offset: 0, limit })
+        const total = typeof res.total === 'number' ? res.total : null
+        setMarketListNodes((res.nodes ?? []) as HotPointNode[])
+        setMarketListOffset((res.nodes ?? []).length)
+        if (total != null) setMarketListHasMore((res.nodes ?? []).length < total)
+        else setMarketListHasMore((res.nodes ?? []).length === limit)
+      } finally {
+        setMarketListLoadingMore(false)
+      }
+    })()
+  }, [rightTab])
 
   const onMouseDown = useCallback(() => { dragging.current = true }, [])
   useEffect(() => {
@@ -583,7 +635,11 @@ export default function App() {
                 <ChatHistorySidebar
                   activeId={conversationId}
                   onSelect={(id) => setConversationId(id)}
-                  onNewChat={() => { setConversationId(null); setHistoryRefresh((n) => n + 1) }}
+                    onNewChat={async () => {
+                      const created = await createRagConversation()
+                      setConversationId(created.conversation_id)
+                      setHistoryRefresh((n) => n + 1)
+                    }}
                   refreshKey={historyRefresh}
                   onDeleted={(id) => {
                     if (conversationId === id) setConversationId(null)
@@ -721,11 +777,14 @@ export default function App() {
                   setSelectedItem({ kind: 'other', title: name || symbol, symbol, category })
                 }}
               />
-            ) : monitorData ? (
+            ) : marketListNodes.length > 0 || marketListLoadingMore ? (
               <MarketCardList
-                nodes={monitorData.nodes}
+                nodes={marketListNodes}
                 selectedId={selectedNode?.market_id ?? null}
                 onSelect={selectMarketNode}
+                hasMore={marketListHasMore}
+                loadingMore={marketListLoadingMore}
+                onLoadMore={loadMoreMarketList}
               />
             ) : (
               <div className="flex items-center justify-center h-full">

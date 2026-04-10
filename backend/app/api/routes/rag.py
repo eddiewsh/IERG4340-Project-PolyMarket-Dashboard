@@ -156,6 +156,16 @@ class ConversationSummary(BaseModel):
     updated_at: str
 
 
+class CreateConversationRequest(BaseModel):
+    title: Optional[str] = Field(None, max_length=120)
+
+
+class CreateConversationResponse(BaseModel):
+    conversation_id: str
+    title: str
+    updated_at: str
+
+
 class RagSummarizeRequest(BaseModel):
     kind: str = Field(..., pattern="^(polymarket|stock|other|news)$")
     title: Optional[str] = None
@@ -400,6 +410,22 @@ async def rag_summarize(req: RagSummarizeRequest):
             raise HTTPException(status_code=429, detail="API rate limit exceeded, please try again shortly.")
         raise HTTPException(status_code=502, detail=err)
     return RagSummarizeResponse(answer=result["answer"], hits=result["hits"], live_news=live_news[:20])
+
+
+@router.post("/rag/conversations", response_model=CreateConversationResponse)
+async def rag_create_conversation(req: CreateConversationRequest):
+    conv_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    title = (req.title or "").strip()[:120] or "New chat"
+    base = _sb_url()
+    headers = _sb_headers()
+    with httpx.Client(timeout=10) as c:
+        c.post(
+            f"{base}/rest/v1/rag_conversations",
+            headers={**headers, "Prefer": "return=minimal"},
+            json={"conversation_id": conv_id, "title": title, "updated_at": now},
+        )
+    return CreateConversationResponse(conversation_id=conv_id, title=title, updated_at=now)
 
 
 @router.get("/rag/conversations", response_model=list[ConversationSummary])
