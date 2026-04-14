@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -34,6 +35,49 @@ def _load_gemini_api_key() -> str:
         if from_file:
             return from_file
     return key
+
+
+def _norm_model_name(name: str) -> str:
+    return (name or "").strip().removeprefix("models/")
+
+
+def _parse_fallback_csv(csv: str) -> list[str]:
+    out: list[str] = []
+    for part in (csv or "").split(","):
+        m = _norm_model_name(part)
+        if m:
+            out.append(m)
+    return out
+
+
+def _unique_model_chain(primary: str, fallbacks: list[str]) -> list[str]:
+    seen: set[str] = set()
+    chain: list[str] = []
+    for m in [_norm_model_name(primary)] + fallbacks:
+        if not m or m in seen:
+            continue
+        seen.add(m)
+        chain.append(m)
+    return chain
+
+
+def _should_try_fallback_chat(status: int, body: str) -> bool:
+    if status in (401, 403, 400):
+        return False
+    if status == 503:
+        return True
+    blob = (body or "").lower()
+    if "high demand" in blob:
+        return True
+    try:
+        err = (json.loads(body).get("error") or {}) if body else {}
+        if err.get("status") == "UNAVAILABLE":
+            return True
+        if "high demand" in str(err.get("message", "")).lower():
+            return True
+    except Exception:
+        pass
+    return False
 
 
 class GeminiEmbedder:
@@ -91,14 +135,45 @@ class GeminiChat:
     ) -> None:
         self.api_key = api_key or _load_gemini_api_key()
         model = chat_model or settings.gemini_chat_model
-        self.chat_model = model.removeprefix("models/")
+        self.chat_model = _norm_model_name(model)
+        fb = _parse_fallback_csv(settings.gemini_chat_model_fallbacks)
+        self._model_chain = _unique_model_chain(self.chat_model, fb)
         self.timeout_s = timeout_s
+
+    async def _post_generate_content(self, client: httpx.AsyncClient, payload: dict[str, Any]) -> dict[str, Any]:
+        params = {"key": self.api_key}
+        last_rate_limited = False
+        last_detail = ""
+        for model in self._model_chain:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            r: httpx.Response | None = None
+            for attempt in range(5):
+                r = await client.post(url, params=params, json=payload)
+                if r.status_code != 429:
+                    break
+                await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+            if r is None:
+                continue
+            if r.status_code == 429:
+                last_rate_limited = True
+                last_detail = r.text
+                continue
+            if r.status_code == 200:
+                return r.json()
+            if _should_try_fallback_chat(r.status_code, r.text):
+                last_detail = r.text
+                continue
+            r.raise_for_status()
+        if last_rate_limited:
+            raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
+        raise RuntimeError(
+            f"Gemini generateContent failed for all models in chain {self._model_chain!r}: {last_detail}"
+        )
 
     async def generate(self, prompt: str, use_grounding: bool = False) -> str:
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY is missing")
 
-        params = {"key": self.api_key}
         payload: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -110,17 +185,7 @@ class GeminiChat:
 
         async with _GEMINI_SEMAPHORE:
             async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.chat_model}:generateContent"
-                r: httpx.Response | None = None
-                for attempt in range(5):
-                    r = await client.post(url, params=params, json=payload)
-                    if r.status_code != 429:
-                        break
-                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
-                if r is None or r.status_code == 429:
-                    raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
-                r.raise_for_status()
-                data = r.json()
+                data = await self._post_generate_content(client, payload)
 
         candidates = (data or {}).get("candidates") or []
         if not candidates:
@@ -139,7 +204,6 @@ class GeminiChat:
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY is missing")
 
-        params = {"key": self.api_key}
         payload: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.2},
@@ -148,17 +212,7 @@ class GeminiChat:
 
         async with _GEMINI_SEMAPHORE:
             async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.chat_model}:generateContent"
-                r: httpx.Response | None = None
-                for attempt in range(5):
-                    r = await client.post(url, params=params, json=payload)
-                    if r.status_code != 429:
-                        break
-                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
-                if r is None or r.status_code == 429:
-                    raise RuntimeError("Gemini API rate limit exceeded.")
-                r.raise_for_status()
-                data = r.json()
+                data = await self._post_generate_content(client, payload)
 
         candidates = (data or {}).get("candidates") or []
         if not candidates:

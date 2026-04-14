@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_embedding_model: str = "gemini-embedding-001"
     gemini_chat_model: str = "gemini-3.1-flash-lite-preview"
+    gemini_chat_model_fallbacks: str = "gemini-2.5-flash"
 
     polymarket_base_url: str = "https://gamma-api.polymarket.com"
     news_api_key: str = ""
