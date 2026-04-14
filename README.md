@@ -1,13 +1,13 @@
-﻿# PolyMonitor (IERG4340)
+# PolyMonitor (IERG4340)
 
-Frontend（Vite + React + Tailwind）+ Backend（FastAPI）。
+Frontend (Vite + React + Tailwind) + Backend (FastAPI).
 
-## 需求
+## Prerequisites
 
 - Python 3.9+
 - Node.js 18+
 
-## Backend（FastAPI）
+## Backend (FastAPI)
 
 ```bash
 cd backend
@@ -17,9 +17,9 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8001
 ```
 
-後端會讀取 `backend/.env`（`backend/app/core/config.py` 設定）。
+The backend reads `backend/.env` (configured in `backend/app/core/config.py`).
 
-### `backend/.env`（必要）
+### `backend/.env` (required)
 
 ```bash
 DEBUG=true
@@ -33,18 +33,18 @@ GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_CHAT_MODEL=gemini-3.1-flash-lite-preview
 GEMINI_CHAT_MODEL_FALLBACKS=gemini-2.5-flash
 
-# 可選（沒填會拿到較少/沒有外部新聞）
+# Optional (without keys you may get fewer/no external news)
 NEWS_API_KEY=
 NEWS_API_KEY2=
 GNEWS_API_KEY=
 WORLDNEWS_API_KEY=
 
-# 可選
+# Optional
 NEWS_SCHEDULER_ENABLED=false
 NEWS_FETCH_EXTERNAL_ON_REQUEST=false
 ```
 
-## Frontend（Vite）
+## Frontend (Vite)
 
 ```bash
 cd frontend
@@ -52,18 +52,18 @@ npm install
 npm run dev
 ```
 
-前端 dev server 會 proxy：
+The dev server proxies:
 
-- `/api` → `http://localhost:8001`
-- `/ws` → `ws://localhost:8001`
+- `/api` -> `http://localhost:8001`
+- `/ws`  -> `ws://localhost:8001`
 
-### `frontend/.env`（可選）
+### `frontend/.env` (optional)
 
 ```bash
 VITE_API_BASE_URL=
 ```
 
-## 常用網址
+## URLs
 
-- Frontend：`http://localhost:5173`
-- Backend health：`http://localhost:8001/api/health`
+- Frontend: `http://localhost:5173`
+- Backend health: `http://localhost:8001/api/health`
