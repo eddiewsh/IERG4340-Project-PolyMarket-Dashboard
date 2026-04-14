@@ -2,24 +2,25 @@ import os
 
 from pydantic_settings import BaseSettings
 from pathlib import Path
+from pydantic import Field
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
     app_name: str = "PolyMonitor"
-    debug: bool = True
+    debug: bool = Field(default=True, validation_alias="DEBUG")
     is_serverless: bool = bool(os.environ.get("VERCEL"))
-    cors_origins: list[str] = ["*"]
-    cron_secret: str = ""
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"], validation_alias="CORS_ORIGINS")
+    cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
 
-    supabase_url: str = ""
-    supabase_service_role_key: str = ""
+    supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
+    supabase_service_role_key: str = Field(default="", validation_alias="SUPABASE_SERVICE_ROLE_KEY")
 
-    gemini_api_key: str = ""
-    gemini_embedding_model: str = "gemini-embedding-001"
-    gemini_chat_model: str = "gemini-3.1-flash-lite-preview"
-    gemini_chat_model_fallbacks: str = "gemini-2.5-flash"
+    gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
+    gemini_embedding_model: str = Field(default="gemini-embedding-001", validation_alias="GEMINI_EMBEDDING_MODEL")
+    gemini_chat_model: str = Field(default="gemini-3.1-flash-lite-preview", validation_alias="GEMINI_CHAT_MODEL")
+    gemini_chat_model_fallbacks: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_CHAT_MODEL_FALLBACKS")
 
     polymarket_base_url: str = "https://gamma-api.polymarket.com"
     news_api_key: str = ""

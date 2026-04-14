@@ -2,14 +2,74 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
 
-_GEMINI_MAX_CONCURRENCY = 2
+_IS_VERCEL = bool(getattr(settings, "is_serverless", False))
+_GEMINI_MAX_CONCURRENCY = 1 if _IS_VERCEL else 2
 _GEMINI_SEMAPHORE = asyncio.Semaphore(_GEMINI_MAX_CONCURRENCY)
+
+_GEMINI_MIN_INTERVAL_S = 0.9 if _IS_VERCEL else 0.0
+_GEMINI_RATE_LOCK = asyncio.Lock()
+_GEMINI_LAST_REQUEST_AT = 0.0
+
+_GEMINI_CACHE_TTL_S = 15.0 if _IS_VERCEL else 0.0
+_GEMINI_CACHE_MAX = 64
+_GEMINI_CACHE: dict[str, tuple[float, str]] = {}
+_GEMINI_CACHE_LOCK = asyncio.Lock()
+
+
+async def _rate_limit_wait() -> None:
+    global _GEMINI_LAST_REQUEST_AT
+    if _GEMINI_MIN_INTERVAL_S <= 0:
+        return
+    async with _GEMINI_RATE_LOCK:
+        now = time.monotonic()
+        wait_s = (_GEMINI_LAST_REQUEST_AT + _GEMINI_MIN_INTERVAL_S) - now
+        if wait_s > 0:
+            await asyncio.sleep(wait_s)
+        _GEMINI_LAST_REQUEST_AT = time.monotonic()
+
+
+def _retry_attempts() -> int:
+    return 2 if _IS_VERCEL else 5
+
+
+def _cache_key(kind: str, model: str, use_grounding: bool, prompt: str) -> str:
+    p = (prompt or "").strip()
+    if len(p) > 2000:
+        p = p[:2000]
+    return f"{kind}|{model}|{int(bool(use_grounding))}|{p}"
+
+
+async def _cache_get(key: str) -> str | None:
+    if _GEMINI_CACHE_TTL_S <= 0:
+        return None
+    now = time.monotonic()
+    async with _GEMINI_CACHE_LOCK:
+        hit = _GEMINI_CACHE.get(key)
+        if not hit:
+            return None
+        exp, val = hit
+        if exp < now:
+            _GEMINI_CACHE.pop(key, None)
+            return None
+        return val
+
+
+async def _cache_set(key: str, val: str) -> None:
+    if _GEMINI_CACHE_TTL_S <= 0:
+        return
+    now = time.monotonic()
+    async with _GEMINI_CACHE_LOCK:
+        if len(_GEMINI_CACHE) >= _GEMINI_CACHE_MAX:
+            oldest_k = min(_GEMINI_CACHE.items(), key=lambda kv: kv[1][0])[0]
+            _GEMINI_CACHE.pop(oldest_k, None)
+        _GEMINI_CACHE[key] = (now + _GEMINI_CACHE_TTL_S, val)
 
 
 def _read_dotenv_value(path: str, key: str) -> str:
@@ -109,7 +169,8 @@ class GeminiEmbedder:
             async with httpx.AsyncClient(timeout=self.timeout_s) as client:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.embedding_model}:embedContent"
                 r: httpx.Response | None = None
-                for attempt in range(5):
+                for attempt in range(_retry_attempts()):
+                    await _rate_limit_wait()
                     r = await client.post(url, params=params, json=payload)
                     if r.status_code != 429:
                         break
@@ -147,7 +208,8 @@ class GeminiChat:
         for model in self._model_chain:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             r: httpx.Response | None = None
-            for attempt in range(5):
+            for attempt in range(_retry_attempts()):
+                await _rate_limit_wait()
                 r = await client.post(url, params=params, json=payload)
                 if r.status_code != 429:
                     break
@@ -174,6 +236,11 @@ class GeminiChat:
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY is missing")
 
+        cache_key = _cache_key("gen", self.chat_model, use_grounding, prompt)
+        cached = await _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         payload: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -198,11 +265,17 @@ class GeminiChat:
         out = "".join(text_parts).strip()
         if not out:
             raise RuntimeError("Gemini generateContent returned empty text")
+        await _cache_set(cache_key, out)
         return out
 
     async def generate_with_sources(self, prompt: str) -> tuple[str, list[dict[str, str]]]:
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY is missing")
+
+        cache_key = _cache_key("src", self.chat_model, True, prompt)
+        cached = await _cache_get(cache_key)
+        if cached is not None:
+            return cached, []
 
         payload: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -233,5 +306,7 @@ class GeminiChat:
             if uri:
                 sources.append({"title": title, "url": uri})
 
+        if text:
+            await _cache_set(cache_key, text)
         return text, sources
 
