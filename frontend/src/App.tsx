@@ -666,7 +666,7 @@ export default function App() {
                     rightTab === 'stocks' ||
                     rightTab === 'others'
                   }
-                  onGenerateImpactMap={(text) => handleGenerateImpactMap(undefined, text)}
+                  onGenerateImpactMap={(text) => (text.trim() ? handleGenerateImpactMap(undefined, text) : handleGenerateImpactMap(selectedItem))}
                   impactLoading={impactLoading}
                 />
               </div>
