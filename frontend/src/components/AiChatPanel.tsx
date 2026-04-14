@@ -250,6 +250,10 @@ export default function AiChatPanel({ conversationId, onConversationCreated, sel
             <button
               type="button"
               onClick={() => {
+                if (selectedItem) {
+                  onGenerateImpactMap('')
+                  return
+                }
                 const text = input.trim()
                 if (text) {
                   onGenerateImpactMap(text)
