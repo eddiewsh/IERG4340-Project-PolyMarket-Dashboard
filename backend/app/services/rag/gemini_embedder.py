@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from typing import Any
 
@@ -37,6 +38,13 @@ async def _rate_limit_wait() -> None:
 
 def _retry_attempts() -> int:
     return 2 if _IS_VERCEL else 5
+
+
+def _sleep_s_for_transient_error(attempt: int) -> float:
+    base = 0.8 if _IS_VERCEL else 0.6
+    cap = 8.0 if _IS_VERCEL else 12.0
+    exp = min(cap, base * (2**attempt))
+    return exp + random.random() * 0.25
 
 
 def _cache_key(kind: str, model: str, use_grounding: bool, prompt: str) -> str:
@@ -211,9 +219,13 @@ class GeminiChat:
             for attempt in range(_retry_attempts()):
                 await _rate_limit_wait()
                 r = await client.post(url, params=params, json=payload)
-                if r.status_code != 429:
-                    break
-                await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+                if r.status_code == 429:
+                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+                    continue
+                if _should_try_fallback_chat(r.status_code, r.text):
+                    await asyncio.sleep(_sleep_s_for_transient_error(attempt))
+                    continue
+                break
             if r is None:
                 continue
             if r.status_code == 429:
