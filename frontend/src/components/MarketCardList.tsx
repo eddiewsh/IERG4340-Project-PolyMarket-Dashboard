@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import type { HotPointNode } from '../types'
 import {
@@ -36,6 +36,7 @@ const MULTI_MAX_VISIBLE = 5
 export default function MarketCardList({ nodes, selectedId, onSelect, hasMore = false, loadingMore = false, onLoadMore }: Props) {
   const [filter, setFilter] = useState<string | null>(null)
   const loadingRef = useRef(false)
+  const listRef = useRef<HTMLDivElement>(null)
 
   const groups = KNOWN_GROUP_ORDER
 
@@ -52,6 +53,23 @@ export default function MarketCardList({ nodes, selectedId, onSelect, hasMore = 
   const scroll = useCallback((dir: number) => {
     scrollRef.current?.scrollBy({ left: dir * 200, behavior: 'smooth' })
   }, [])
+
+  const maybeLoadMore = useCallback(() => {
+    const el = listRef.current
+    if (!el) return
+    const nearEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 220
+    if (!nearEnd) return
+    if (!hasMore || !onLoadMore || loadingRef.current) return
+    loadingRef.current = true
+    Promise.resolve(onLoadMore()).finally(() => {
+      loadingRef.current = false
+    })
+  }, [hasMore, onLoadMore])
+
+  useEffect(() => {
+    if (loadingMore) return
+    maybeLoadMore()
+  }, [loadingMore, nodes.length, filter, maybeLoadMore])
 
   return (
     <div className="flex flex-col h-full">
@@ -88,17 +106,9 @@ export default function MarketCardList({ nodes, selectedId, onSelect, hasMore = 
       </div>
 
       <div
+        ref={listRef}
         className="flex-1 overflow-y-auto px-4 pb-4"
-        onScroll={(e) => {
-          const el = e.currentTarget
-          const nearEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 220
-          if (!nearEnd) return
-          if (!hasMore || !onLoadMore || loadingRef.current) return
-          loadingRef.current = true
-          Promise.resolve(onLoadMore()).finally(() => {
-            loadingRef.current = false
-          })
-        }}
+        onScroll={maybeLoadMore}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {filtered.map((node) => (
