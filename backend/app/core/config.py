@@ -19,9 +19,9 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
     gemini_embedding_model: str = Field(default="gemini-embedding-001", validation_alias="GEMINI_EMBEDDING_MODEL")
-    gemini_chat_model: str = Field(default="gemini-3.1-flash-lite-preview", validation_alias="GEMINI_CHAT_MODEL")
+    gemini_chat_model: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_CHAT_MODEL")
     gemini_chat_model_fallbacks: str = Field(
-        default="gemini-2.5-flash",
+        default="gemini-2.0-flash",
         validation_alias="GEMINI_CHAT_MODEL_FALLBACKS",
     )
 
