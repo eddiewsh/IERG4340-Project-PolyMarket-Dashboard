@@ -1,4 +1,4 @@
-# PolyMonitor (IERG4340)
+# PolyMonitor
 
 Frontend (Vite + React + Tailwind) + Backend (FastAPI).
 
