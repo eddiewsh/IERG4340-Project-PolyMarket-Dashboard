@@ -16,17 +16,29 @@
 
 ### 1. Live globe + market tape
 
+<p align="center">
+  <img src="docs/screenshots/01-globe-and-markets.jpg" alt="PolyMonitor globe dashboard with Polymarket cards" width="100%" />
+</p>
+
 The primary surface is a **cache-first monitoring desk**. A `globe.gl` / Three.js globe plots Polymarket events by inferred geography; marker color follows category, size follows `hot_score` (news mentions + 24h probability move + volume). Click a cluster to pin the event, inspect outcomes, and jump to Polymarket.
 
 The right rail is a filterable **market card grid** (sports, politics, crypto, pop culture, …) with outcome bars, 24h volume, and infinite scroll against `GET /api/monitor/markets`. The bottom ticker streams the same live book — probabilities, volume, and mention counts — so the map never becomes a dead visualization.
 
 ### 2. Causal impact map + news desk
 
+<p align="center">
+  <img src="docs/screenshots/02-impact-map-and-news.jpg" alt="PolyMonitor impact graph and live news feed" width="100%" />
+</p>
+
 Switch to **Impact Map** and the globe yields to a React Flow DAG. Nodes are typed (`event` / `market` / `macro` / `policy`) and color-coded; edges carry direction (`+` / `-` / uncertain). Gemini builds the chain from a selected headline, ticker, or Polymarket contract — then you can elaborate a node, save the map, and reload it from history.
 
 The news column is a multi-source feed (GNews, WorldNewsAPI, NewsData, RTHK RSS) with region inference, breaking flags, and coarse sentiment. **Generate impact report** is the analyst loop: one article → a grounded causal graph → an AI brief instead of a wall of headlines.
 
 ### 3. Market drill-down + AI copilot
+
+<p align="center">
+  <img src="docs/screenshots/03-impact-map-and-markets.jpg" alt="PolyMonitor impact map with Polymarket list and AI chat" width="100%" />
+</p>
 
 Selection is a first-class object (`SelectedItem`: Polymarket / news / stock / crypto / other). The bottom-left detail pane shows rules, resolution source, and outcome bars. The bottom chat is not a generic chatbot — it is RAG over the item you just clicked:
 
