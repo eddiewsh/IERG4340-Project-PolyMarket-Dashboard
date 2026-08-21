@@ -20,7 +20,7 @@ from app.services.fmp_others import build_others
 from app.services.finnhub_hot import build_hot_large_value_stocks
 from app.services.news.client import ensure_news_cache, get_cached_articles
 from app.services.polymarket.client import get_cached_markets, get_cached_monitor_markets
-from app.services.rag.gemini_embedder import GeminiChat, GeminiEmbedder
+from app.services.rag.gemini_embedder import GeminiChat, GeminiEmbedder, _redact_secrets
 from app.services.rag.rag_answer import RagAnswerService, chunk_text
 from app.services.rag.supabase_store import RagChunk, SupabaseRagStore
 
@@ -334,7 +334,7 @@ async def rag_chat(req: ChatRequest):
             extra_instructions=extra,
         )
     except Exception as e:
-        err = str(e)
+        err = _redact_secrets(str(e))
         logger.error("rag_chat error: %s", err, exc_info=True)
         if "rate limit" in err.lower() or "429" in err:
             raise HTTPException(status_code=429, detail="API rate limit exceeded, please try again shortly.")
@@ -388,7 +388,7 @@ async def rag_summarize(req: RagSummarizeRequest):
                 else:
                     raise
         except Exception as e:
-            err = str(e)
+            err = _redact_secrets(str(e))
             logger.error("rag_summarize error: %s", err, exc_info=True)
             if "403" in err or "forbidden" in err.lower():
                 raise HTTPException(status_code=502, detail="Gemini API forbidden (check GEMINI_API_KEY / model permission).")
@@ -472,7 +472,7 @@ async def rag_summarize(req: RagSummarizeRequest):
                 raise
         result = {"answer": answer, "hits": []}
     except Exception as e:
-        err = str(e)
+        err = _redact_secrets(str(e))
         logger.error("rag_summarize error: %s", err, exc_info=True)
         if "403" in err or "forbidden" in err.lower():
             raise HTTPException(status_code=502, detail="Gemini API forbidden (check GEMINI_API_KEY / model permission).")

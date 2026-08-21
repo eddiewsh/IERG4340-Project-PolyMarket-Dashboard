@@ -16,29 +16,17 @@
 
 ### 1. Live globe + market tape
 
-<p align="center">
-  <img src="docs/screenshots/01-globe-and-markets.jpg" alt="PolyMonitor globe dashboard with Polymarket cards" width="100%" />
-</p>
-
 The primary surface is a **cache-first monitoring desk**. A `globe.gl` / Three.js globe plots Polymarket events by inferred geography; marker color follows category, size follows `hot_score` (news mentions + 24h probability move + volume). Click a cluster to pin the event, inspect outcomes, and jump to Polymarket.
 
 The right rail is a filterable **market card grid** (sports, politics, crypto, pop culture, …) with outcome bars, 24h volume, and infinite scroll against `GET /api/monitor/markets`. The bottom ticker streams the same live book — probabilities, volume, and mention counts — so the map never becomes a dead visualization.
 
 ### 2. Causal impact map + news desk
 
-<p align="center">
-  <img src="docs/screenshots/02-impact-map-and-news.jpg" alt="PolyMonitor impact graph and live news feed" width="100%" />
-</p>
-
 Switch to **Impact Map** and the globe yields to a React Flow DAG. Nodes are typed (`event` / `market` / `macro` / `policy`) and color-coded; edges carry direction (`+` / `-` / uncertain). Gemini builds the chain from a selected headline, ticker, or Polymarket contract — then you can elaborate a node, save the map, and reload it from history.
 
 The news column is a multi-source feed (GNews, WorldNewsAPI, NewsData, RTHK RSS) with region inference, breaking flags, and coarse sentiment. **Generate impact report** is the analyst loop: one article → a grounded causal graph → an AI brief instead of a wall of headlines.
 
 ### 3. Market drill-down + AI copilot
-
-<p align="center">
-  <img src="docs/screenshots/03-impact-map-and-markets.jpg" alt="PolyMonitor impact map with Polymarket list and AI chat" width="100%" />
-</p>
 
 Selection is a first-class object (`SelectedItem`: Polymarket / news / stock / crypto / other). The bottom-left detail pane shows rules, resolution source, and outcome bars. The bottom chat is not a generic chatbot — it is RAG over the item you just clicked:
 
@@ -113,7 +101,7 @@ Stdlib `sqlite3` persists `backend/data/monitor_markets.sqlite`. There is **no**
 | --- | --- |
 | **Vercel** | Vite static frontend + Python serverless (`api/index.py` → FastAPI) |
 | **Supabase** | `news_cache`, `rag_documents` (pgvector 3072) + `match_rag_documents`, chat/impact-map tables |
-| **Google Gemini** | `gemini-embedding-001` ingest; chat/summarize/impact with `gemini-2.5-flash` and `gemini-2.0-flash` fallback (Vercel-safe) |
+| **Google Gemini** | `gemini-embedding-001` ingest; chat/summarize/impact with `gemini-3.5-flash-lite` and a 3.x/2.5 fallback chain |
 | **Polymarket Gamma** | Events / markets (`https://gamma-api.polymarket.com`) |
 | **News** | GNews, WorldNewsAPI, NewsData, RTHK RSS |
 | **Markets** | Finnhub, Financial Modeling Prep, Massive, Yahoo Finance quotes |
@@ -239,8 +227,8 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 GEMINI_API_KEY=
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
-GEMINI_CHAT_MODEL=gemini-2.5-flash
-GEMINI_CHAT_MODEL_FALLBACKS=gemini-2.0-flash
+GEMINI_CHAT_MODEL=gemini-3.5-flash-lite
+GEMINI_CHAT_MODEL_FALLBACKS=gemini-3.5-flash,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-2.5-flash-lite
 
 NEWS_API_KEY=
 NEWS_API_KEY2=
@@ -274,4 +262,4 @@ Leave empty in local dev so the Vite proxy is used. On Vercel the SPA and `/api`
 2. Set the same secrets as `backend/.env`, plus `CRON_SECRET` for `/api/cron/refresh`.
 3. Production tracks **`main`**. Preview deployments are created for every branch / PR.
 
-Gemini defaults on this branch are chosen for current API availability and serverless timeouts (`gemini-2.5-flash` → `gemini-2.0-flash`), with existing 429 backoff left intact.
+Gemini chat defaults to `gemini-3.5-flash-lite`, then `gemini-3.5-flash` / `gemini-3.1-flash-lite` / `gemini-3.6-flash`. A 404 or retired model skips immediately to the next ID; API keys are sent via `x-goog-api-key` and never echoed in UI errors.

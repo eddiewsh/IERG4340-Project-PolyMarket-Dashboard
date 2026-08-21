@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import time
 from typing import Any
 
@@ -118,10 +119,20 @@ def _parse_fallback_csv(csv: str) -> list[str]:
     return out
 
 
+_BUILTIN_CHAT_FALLBACKS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+]
+
+
 def _unique_model_chain(primary: str, fallbacks: list[str]) -> list[str]:
     seen: set[str] = set()
     chain: list[str] = []
-    for m in [_norm_model_name(primary)] + fallbacks:
+    for m in [_norm_model_name(primary)] + fallbacks + _BUILTIN_CHAT_FALLBACKS:
         if not m or m in seen:
             continue
         seen.add(m)
@@ -129,23 +140,68 @@ def _unique_model_chain(primary: str, fallbacks: list[str]) -> list[str]:
     return chain
 
 
-def _should_try_fallback_chat(status: int, body: str) -> bool:
-    if status in (401, 403, 400):
-        return False
-    if status == 503:
+def _redact_secrets(text: str) -> str:
+    s = text or ""
+    s = re.sub(r"(?i)(key=)[^&\s]+", r"\1REDACTED", s)
+    s = re.sub(r"(?i)(x-goog-api-key['\"]?\s*[:=]\s*)[^\s'\"&]+", r"\1REDACTED", s)
+    s = re.sub(r"AIza[0-9A-Za-z_\-]{10,}", "REDACTED", s)
+    s = re.sub(r"AQ\.[0-9A-Za-z_\-]{10,}", "REDACTED", s)
+    return s
+
+
+def _error_status(body: str) -> str:
+    try:
+        err = (json.loads(body).get("error") or {}) if body else {}
+        return str(err.get("status") or "")
+    except Exception:
+        return ""
+
+
+def _error_message(body: str) -> str:
+    try:
+        err = (json.loads(body).get("error") or {}) if body else {}
+        return str(err.get("message") or "")
+    except Exception:
+        return ""
+
+
+def _is_missing_model(status: int, body: str) -> bool:
+    if status == 404:
+        return True
+    st = _error_status(body).upper()
+    if st == "NOT_FOUND":
+        return True
+    blob = f"{_error_message(body)} {body or ''}".lower()
+    return "no longer available" in blob or "not found for model" in blob or "is not found" in blob
+
+
+def _should_retry_same_model(status: int, body: str) -> bool:
+    if status in (429, 503):
         return True
     blob = (body or "").lower()
     if "high demand" in blob:
         return True
-    try:
-        err = (json.loads(body).get("error") or {}) if body else {}
-        if err.get("status") == "UNAVAILABLE":
-            return True
-        if "high demand" in str(err.get("message", "")).lower():
-            return True
-    except Exception:
-        pass
+    st = _error_status(body).upper()
+    if st in ("UNAVAILABLE", "RESOURCE_EXHAUSTED"):
+        return True
+    if "high demand" in _error_message(body).lower():
+        return True
     return False
+
+
+def _should_try_next_model(status: int, body: str) -> bool:
+    if _is_missing_model(status, body):
+        return True
+    if _should_retry_same_model(status, body):
+        return True
+    return False
+
+
+def _gemini_headers(api_key: str) -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
 
 
 class GeminiEmbedder:
@@ -168,7 +224,7 @@ class GeminiEmbedder:
         if not text:
             return [0.0] * 768
 
-        params = {"key": self.api_key}
+        headers = _gemini_headers(self.api_key)
         payload: dict[str, Any] = {
             "content": {"parts": [{"text": text}]},
         }
@@ -179,15 +235,22 @@ class GeminiEmbedder:
                 r: httpx.Response | None = None
                 for attempt in range(_retry_attempts()):
                     await _rate_limit_wait()
-                    r = await client.post(url, params=params, json=payload)
-                    if r.status_code != 429:
-                        break
-                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+                    try:
+                        r = await client.post(url, headers=headers, json=payload)
+                    except httpx.HTTPError as e:
+                        raise RuntimeError(_redact_secrets(f"Gemini embedContent request failed: {e}")) from None
+                    if r.status_code == 429 or _should_retry_same_model(r.status_code, r.text):
+                        await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
+                        continue
+                    break
                 if r is None or r.status_code == 429:
                     raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
                 if r.status_code >= 400:
                     key_len = len(self.api_key or "")
-                    raise RuntimeError(f"Gemini embedContent failed ({r.status_code}) [key_len={key_len}]: {r.text}")
+                    detail = _redact_secrets(r.text)
+                    raise RuntimeError(
+                        f"Gemini embedContent failed ({r.status_code}) [key_len={key_len}]: {detail}"
+                    )
                 data = r.json()
             values = (((data or {}).get("embedding") or {}).get("values")) or []
             if not isinstance(values, list) or not values:
@@ -210,7 +273,7 @@ class GeminiChat:
         self.timeout_s = timeout_s
 
     async def _post_generate_content(self, client: httpx.AsyncClient, payload: dict[str, Any]) -> dict[str, Any]:
-        params = {"key": self.api_key}
+        headers = _gemini_headers(self.api_key)
         last_rate_limited = False
         last_detail = ""
         for model in self._model_chain:
@@ -218,30 +281,44 @@ class GeminiChat:
             r: httpx.Response | None = None
             for attempt in range(_retry_attempts()):
                 await _rate_limit_wait()
-                r = await client.post(url, params=params, json=payload)
-                if r.status_code == 429:
-                    await asyncio.sleep(min(12.0, 1.5 * (2**attempt)))
-                    continue
-                if _should_try_fallback_chat(r.status_code, r.text):
+                try:
+                    r = await client.post(url, headers=headers, json=payload)
+                except httpx.HTTPError as e:
+                    last_detail = _redact_secrets(str(e))
+                    break
+                body = r.text or ""
+                if r.status_code == 200:
+                    return r.json()
+                # Missing model → skip retries and try the next model immediately.
+                if _is_missing_model(r.status_code, body):
+                    last_detail = _redact_secrets(body)
+                    r = None
+                    break
+                if _should_retry_same_model(r.status_code, body):
+                    last_rate_limited = r.status_code in (429, 503) or "rate" in body.lower()
+                    last_detail = _redact_secrets(body)
                     await asyncio.sleep(_sleep_s_for_transient_error(attempt))
                     continue
-                break
-            if r is None:
-                continue
-            if r.status_code == 429:
-                last_rate_limited = True
-                last_detail = r.text
-                continue
-            if r.status_code == 200:
+                # Non-retryable error for this model: try next model if allowed, else stop.
+                last_detail = _redact_secrets(body)
+                if _should_try_next_model(r.status_code, body):
+                    r = None
+                    break
+                raise RuntimeError(
+                    _redact_secrets(
+                        f"Gemini generateContent failed ({r.status_code}) model={model}: {body}"
+                    )
+                )
+            if r is not None and r.status_code == 200:
                 return r.json()
-            if _should_try_fallback_chat(r.status_code, r.text):
-                last_detail = r.text
-                continue
-            r.raise_for_status()
+            # Exhausted retries on this model (typically 429/503) → try next model.
+            continue
         if last_rate_limited:
             raise RuntimeError("Gemini API rate limit exceeded. Please wait a moment and try again.")
         raise RuntimeError(
-            f"Gemini generateContent failed for all models in chain {self._model_chain!r}: {last_detail}"
+            _redact_secrets(
+                f"Gemini generateContent failed for all models in chain {self._model_chain!r}: {last_detail}"
+            )
         )
 
     async def generate(self, prompt: str, use_grounding: bool = False) -> str:
