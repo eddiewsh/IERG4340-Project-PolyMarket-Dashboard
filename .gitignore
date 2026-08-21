@@ -11,3 +11,9 @@ backend/.env
 *.pyc
 
 backend/data/*.sqlite
+
+# Cursor local IDE state (do not publish)
+.cursor/
+!.cursor/rules/
+!.cursor/commands/
+.cursorrules
