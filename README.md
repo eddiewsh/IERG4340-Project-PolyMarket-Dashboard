@@ -30,8 +30,8 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 GEMINI_API_KEY=
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
-GEMINI_CHAT_MODEL=gemini-3.1-flash-lite-preview
-GEMINI_CHAT_MODEL_FALLBACKS=gemini-2.5-flash
+GEMINI_CHAT_MODEL=gemini-2.5-flash
+GEMINI_CHAT_MODEL_FALLBACKS=gemini-2.0-flash
 
 # Optional (without keys you may get fewer/no external news)
 NEWS_API_KEY=
