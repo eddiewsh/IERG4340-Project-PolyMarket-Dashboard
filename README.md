@@ -1,6 +1,61 @@
 # PolyMonitor
 
-Frontend (Vite + React + Tailwind) + Backend (FastAPI).
+PolyMonitor is a Polymarket-focused event intelligence dashboard. It combines live prediction market signals, news context, and AI-assisted summarization into one workspace so users can quickly understand **what is happening**, **why it matters**, and **what connected events may follow**.
+
+## What the product does
+
+PolyMonitor helps you monitor market-moving events as a causal chain:
+
+- Tracks active Polymarket-related event signals and highlights high-heat markets.
+- Blends those signals with live news context to explain potential drivers.
+- Lets users select an event/asset/news item and inspect details in side panels.
+- Generates AI summaries and exploration threads to support deeper research.
+- Visualizes event relationships and impact links to support causal reasoning.
+
+## Core user flow
+
+1. **Scan the dashboard map/list** to spot high-hot-score events and market movement.
+2. **Select an item** (market, news, stock/other symbol) to open detail context.
+3. **Review supporting evidence** from market metrics, related articles, and metadata.
+4. **Use AI tools** to summarize the selected item and ask follow-up questions.
+5. **Explore impact chains** to reason about downstream effects across related events.
+
+## Visual overview
+
+> Image numbering follows the required reverse upload order: latest upload = Image 1.
+
+### Image 1 — Dashboard + map-driven event monitoring
+![Image 1 - Dashboard and map view](<img>)
+Main workspace showing hot event discovery, map/list exploration, and real-time monitoring context.
+
+### Image 2 — Causal chain and analysis workflow
+![Image 2 - Causal chain analysis view](<img>)
+Focused analysis view for tracing event relationships, examining likely impacts, and iterating on hypotheses.
+
+### Image 3 — Supporting market/news detail panels
+![Image 3 - Market and news supporting panels](<img>)
+Right-side context panels and detail areas used to validate an event with market data, metadata, and news support.
+
+## Key UI subsystems
+
+- **Visualization canvas (map + graph):** event hotspots and impact relationships.
+- **Market/news side panels:** fast drill-down into pricing, volume, and article context.
+- **Selected item detail card:** unified detail block for market/news/asset metadata.
+- **AI chat + summary panel:** retrieval-assisted explanations and follow-up exploration.
+
+## Feature highlights
+
+- Polymarket monitor with heat scoring and periodic refresh.
+- Multi-source news ingest and regional/breaking filtering.
+- RAG-style chat/ask/summarize endpoints backed by Gemini + Supabase.
+- Real-time-style frontend polling + websocket updates for hotpoint refreshes.
+
+## Architecture (high level)
+
+- **Frontend:** Vite + React + Tailwind dashboard with map, panels, and AI chat UI.
+- **Backend:** FastAPI services for markets, news, hotpoints, graph, and RAG routes.
+- **Data/services:** Polymarket APIs, news providers, Supabase (cache + vector), Gemini models.
+- **Local cache:** SQLite monitor cache to keep market views responsive.
 
 ## Prerequisites
 
